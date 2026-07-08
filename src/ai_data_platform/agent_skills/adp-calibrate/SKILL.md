@@ -12,7 +12,7 @@ When structural quality passes but KPIs drift from research (Flow E).
 1. `execute_sql` for each KPI distribution and aggregate
 2. Compute drift: `|generated_pct - research_pct| / research_pct`
 3. If drift > tolerance (default 5%): propose spec weight patches (`values:` weights)
-4. User approves → `apply_spec` → `generate_synthetic_data` (or `rows_per_table` for targeted regen)
+4. User approves → `apply_spec` → `generate_synthetic_data` (use `rows_per_table` param to regen only specific tables)
 5. Re-run `run_quality_check` and KPI SQL
 
 ## MCP prompt

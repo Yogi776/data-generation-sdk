@@ -70,6 +70,19 @@ flowchart LR
 
 Skip heavy research; use adp-intake for structure, then adp-spec-author.
 
+```mermaid
+flowchart LR
+  intake[intake_wizard] --> propose[propose_spec]
+  propose --> approve{User approves YAML?}
+  approve -->|yes| apply[apply_spec]
+  apply --> gen[generate_synthetic_data]
+  gen --> qc[run_quality_check]
+  qc --> preview[preview_data]
+```
+
+**MCP tools:** `intake_wizard` → `propose_spec` → `apply_spec` → `generate_synthetic_data` → `run_quality_check` → `preview_data`  
+**Cursor skill:** adp-intake → adp-spec-author → adp-generate-validate
+
 ### Flow C — Learn-from-sample
 
 **When:** CSV/DB sample in `adp.yaml`.
@@ -118,7 +131,7 @@ Skip heavy research; use adp-intake for structure, then adp-spec-author.
 | Generate | `generate_synthetic_data` |
 | Structural QA | `run_quality_check`, `preview_data` |
 | Business QA | `validate_business_questions`, `execute_sql`, `generate_business_insights` |
-| Calibrate | `execute_sql`, `apply_spec`, `generate_synthetic_data` |
+| Calibrate | `execute_sql` (KPI drift), `apply_spec` (patches spec weights), `generate_synthetic_data` |
 
 ---
 

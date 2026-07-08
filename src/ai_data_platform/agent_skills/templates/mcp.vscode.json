@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "adp": {
+      "type": "stdio",
+      "command": "adp",
+      "args": ["mcp-server", "--project", "{{PROJECT_ROOT}}"]
+    }
+  }
+}

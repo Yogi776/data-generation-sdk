@@ -1,0 +1,1 @@
+claude mcp add adp -- adp mcp-server --project <your-project-path>

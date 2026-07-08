@@ -73,6 +73,19 @@ def run_poet(package: str, version: str) -> str:
     return result.stdout
 
 
+_REAL_TEST_BLOCK = """\
+  test do
+    assert_match version.to_s, shell_output("#{bin}/adp version")
+    shell_output("#{bin}/adp --help")
+    shell_output("#{bin}/adp mcp-server --help")
+    cd testpath do
+      system bin/"adp", "init", "--name", "brew-smoke"
+      assert_path_exists testpath/"adp.yaml"
+    end
+  end
+"""
+
+
 def patch_formula(
     formula_text: str,
     version: str,
@@ -86,25 +99,40 @@ def patch_formula(
     - Leave resource URLs/SHAs untouched (they have their own values)
     - Ensure depends_on python@3.12 (poet sometimes uses python@3.y)
     - Set desc and homepage to our values
+    - Replace poet's placeholder test block with a real smoke test
     """
     lines = formula_text.splitlines(keepends=True)
     result_lines: list[str] = []
     in_resource = False
+    skipped_test_block = False
 
     for line in lines:
         stripped = line.strip()
 
-        # Track whether we're inside a resource block (indented lines after "resource ")
+        # Detect entering a resource block
         if stripped.startswith("resource "):
             in_resource = True
             result_lines.append(line)
             continue
-        # Top-level lines are at 2 spaces; resource body is at 4+ spaces
+        # Inside resource block: 4-space indented lines
         if in_resource and line.startswith("    "):
             result_lines.append(line)
             continue
         # Exited resource block
         in_resource = False
+
+        # Skip poet's placeholder test block ("test do\n    false\n  end")
+        if stripped == "test do":
+            # Consume the "test do" + one line (false) + "end"
+            result_lines.append(_REAL_TEST_BLOCK)
+            skipped_test_block = True
+            continue
+        if skipped_test_block and stripped in ("false", "end") and "end" not in line:
+            # skip the placeholder body lines
+            continue
+        if skipped_test_block and stripped == "end":
+            skipped_test_block = False
+            continue
 
         # Patch top-level URL line
         if stripped.startswith("url "):

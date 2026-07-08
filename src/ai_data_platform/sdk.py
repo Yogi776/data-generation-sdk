@@ -18,8 +18,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import polars as pl
-
 from ai_data_platform.config import (
     ProjectConfig,
     SourceConfig,
@@ -27,7 +25,7 @@ from ai_data_platform.config import (
     load_config,
     save_config,
 )
-from ai_data_platform.core.exceptions import ADPError, GenerationError
+from ai_data_platform.core.exceptions import ADPError
 from ai_data_platform.core.paths import safe_resolve
 from ai_data_platform.metadata.catalog import Catalog
 
@@ -83,7 +81,14 @@ class ADPClient:
             )
         cfg = default_config(project_name or self.root.name)
         self.root.mkdir(parents=True, exist_ok=True)
-        return save_config(cfg, self.root)
+        path = save_config(cfg, self.root)
+        try:
+            from ai_data_platform.agent.setup import install_agent
+
+            install_agent(project_root=self.root, clients=["all"])
+        except Exception:
+            pass  # agent setup is best-effort during init
+        return path
 
     def add_source(self, source: SourceConfig, *, test: bool = True) -> dict[str, Any]:
         """Add (or replace) a source in adp.yaml; optionally test the connection."""
@@ -167,6 +172,22 @@ class ADPClient:
         )
         return plan.model_dump()
 
+    def save_plan(
+        self,
+        path: str | Path,
+        rows: int | None = None,
+        tables: list[str] | None = None,
+        seed: int | None = None,
+        rows_per_table: dict[str, int] | None = None,
+    ) -> Path:
+        """Write the generation Plan IR to JSON (for Go executor or inspection)."""
+        import json
+
+        from ai_data_platform.core.paths import safe_write_text
+
+        plan = self.build_plan(rows, tables, seed, rows_per_table)
+        return safe_write_text(self.root, path, json.dumps(plan, indent=2) + "\n")
+
     def generate_data(
         self,
         rows: int | None = None,
@@ -179,14 +200,17 @@ class ADPClient:
         dataset: str = "default",
         register: bool | None = None,
     ) -> dict[str, Any]:
-        from ai_data_platform.generator.engine import GenerationPlan, generate
+        from ai_data_platform.generator.engine import GenerationPlan
+        from ai_data_platform.generator.executor_dispatch import dispatch_generate
 
         cfg = self.config
         plan = GenerationPlan.model_validate(self.build_plan(rows, tables, seed, rows_per_table))
         rel_dir = output_dir or cfg.output_dir
         out_dir = safe_resolve(self.root, rel_dir)
         fmt = output_format or cfg.generation.output_format
-        results = generate(plan, out_dir, output_format=fmt)
+        results = dispatch_generate(
+            plan, out_dir, output_format=fmt, cfg=cfg.generation
+        )
         out: dict[str, Any] = {"seed": plan.seed, "format": fmt, "tables": results}
 
         # Auto-register generated files into DuckDB for exploration via MCP.
@@ -209,25 +233,15 @@ class ADPClient:
 
     # -- quality ---------------------------------------------------------------------
     def quality_check(self, data_dir: str | None = None) -> dict[str, Any]:
-        """Run derived checks against generated outputs (default) or a data dir."""
-        from ai_data_platform.quality.checks import run_quality_checks
+        """Run derived checks against generated outputs (default) or a data dir.
+
+        Uses DuckDB streaming against parquet/csv files — no full-table Polars load.
+        """
+        from ai_data_platform.quality.duckdb_checks import run_quality_checks_on_dir
 
         cfg = self.config
         target = safe_resolve(self.root, data_dir or cfg.output_dir)
-        data: dict[str, pl.DataFrame] = {}
-        known = {t["table"] for t in self.catalog.list_tables()}
-        for f in sorted(target.glob("*.parquet")):
-            if f.stem in known:
-                data[f.stem] = pl.read_parquet(f)
-        for f in sorted(target.glob("*.csv")):
-            if f.stem in known and f.stem not in data:
-                data[f.stem] = pl.read_csv(f, try_parse_dates=True)
-        if not data:
-            raise GenerationError(
-                f"No generated csv/parquet files matching catalog tables in {target}.",
-                hint="Run `adp generate-data` first, or pass data_dir.",
-            )
-        return run_quality_checks(self.catalog, data)
+        return run_quality_checks_on_dir(self.catalog, target)
 
     # -- semantic / sql / docs ----------------------------------------------------------
     def create_semantic_model(

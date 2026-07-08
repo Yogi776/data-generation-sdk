@@ -14,32 +14,27 @@ pip install ai-data-platform
 
 ## Architecture
 
-```mermaid
-graph TB
-    subgraph Interfaces["Interfaces"]
-        CLI["CLI (Typer, adp)"]
-        API["REST API (FastAPI)"]
-        UI["Web UI (static)"]
-        MCP["MCP (stdio)"]
-    end
-
-    ADP["ADPClient (sdk.py)"]
-
-    subgraph Modules
-        CONNECT["Connectors"]
-        META["Metadata"]
-        PROF["Profiler"]
-        GEN["Generator"]
-        QUAL["Quality"]
-        SEM["Semantic"]
-        SQL["SQL Assistant"]
-        DOCS["Docs"]
-    end
-
-    Interfaces --> ADP
-    ADP --> Modules
-    CONNECT -->|"CSV Parquet DuckDB PG MySQL"|Modules
-    GEN -->|"CSV Parquet DuckDB SQL"|Modules
+```
+                    ┌─────────────────────────────────────────┐
+                    │  YOU  (via CLI / API / UI / MCP / SDK)  │
+                    └──────────────────┬──────────────────────┘
+                                       │
+                    ┌──────────────────▼──────────────────────┐
+                    │              ADPClient                   │
+                    │   (one backend, every interface)         │
+                    └──────────────────┬──────────────────────┘
+                                       │
+     ┌──────────┬──────────┬──────────┼──────────┬──────────┐
+     │          │          │          │          │          │
+┌────▼───┐ ┌────▼───┐ ┌────▼───┐ ┌──▼────┐ ┌──▼────┐ ┌──▼────┐
+│Connector│ │Metadata│ │Profiler│ │Generator│ │Quality│ │Semantic│
+│Registry │ │Catalog │ │        │ │        │ │       │ │Builder │
+│ csv     │ │SQLite  │ │stats   │ │Plan IR │ │checks │ │Cube.js │
+│ parquet │ │        │ │PII     │ │FK-safe │ │score  │ │YAML    │
+│ duckdb  │ └────────┘ │PK/FK   │ │seeded  │ │       │ │        │
+│ postgres│            │        │ │        │ │       │ │        │
+│ mysql   │            └────────┘ │        │ │       │ │        │
+└─────────┘                       └────────┘ └───────┘ └────────┘
 ```
 
 **Design principles:**
@@ -53,116 +48,51 @@ graph TB
 
 ## How It Works
 
-```mermaid
-graph TD
-    START(("User"))
+**Two entry paths:**
 
-    PATH_A["Config-only: adp apply-spec spec.yaml"]
-    PATH_B["Learn from data: adp scan + adp profile"]
+```
+Path A: Config-Only (no data needed)
+─────────────────────────────────────
+  spec.yaml  ──►  adp apply-spec  ──►  adp generate-data  ──►  output/
 
-    START --> PATH_A
-    START --> PATH_B
-
-    SPEC["spec.yaml"]
-    APPLY["adp apply-spec"]
-
-    PATH_A --> SPEC --> APPLY
-
-    CONNECT["adp connect"]
-    SCAN["adp scan"]
-    PROFILE["adp profile"]
-
-    PATH_B --> CONNECT --> SCAN --> PROFILE
-
-    APPLY & PROFILE --> CATALOG["Metadata Catalog"]
-
-    CATALOG --> PLAN_IR["Plan IR"]
-    PLAN_IR --> SEEDED["Seeded PRNG"]
-
-    SEQ["sequence/uuid"]
-    CAT["weighted choice"]
-    MONEY["lognormal"]
-    COUNT["Poisson floor"]
-    DATE["uniform date range"]
-    EXPR["arithmetic expr"]
-
-    SEEDED --> SEQ
-    SEEDED --> CAT
-    SEEDED --> MONEY
-    SEEDED --> COUNT
-    SEEDED --> DATE
-    SEEDED --> EXPR
-
-    SEQ & CAT & MONEY & COUNT & DATE & EXPR --> WRITERS["Writers"]
-
-    WRITERS --> OUT_DATA["output/"]
-
-    WRITERS --> RULES["Rules"]
-    RULES --> CHECKS["adp quality-check"]
-    CHECKS --> REPORT["quality.md"]
-
-    CATALOG --> DETECT["Fact vs Dim"]
-    DETECT --> MEASURES["Measures"]
-    DETECT --> JOIN["Joins"]
-    MEASURES & JOIN --> CUBE["Cube.js YAML"]
-
-    CATALOG --> QUESTION["NL question"]
-    QUESTION --> GROUNDED["PII-safe prompt"]
-    GROUNDED --> PROVIDER["LLM"]
-    PROVIDER --> SQL_OUT["SELECT"]
-
-    OUT_DATA -.-> MCP["MCP Server"]
-    MCP --> TOOLS["11 Tools"]
-    TOOLS --> AGENTS["Claude, Cursor, Windsurf"]
-
-    START fill:#e94560
+Path B: Learn from your data
+─────────────────────────────────────
+  adp connect  ──►  adp scan  ──►  adp profile  ──►  adp generate-data  ──►  output/
+                                                              │
+                                           adp quality-check ──┘
 ```
 
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant CLI
-    participant SDK as ADPClient
-    participant CAT as Catalog
-    participant GEN as Generator
-    participant QUAL as Quality
+**The pipeline:**
 
-    rect rgb(20, 20, 50)
-        Note over U,QUAL: Path A: Config-Only
-        U->>CLI: adp apply-spec spec.yaml
-        CLI->>SDK: apply_spec()
-        U->>CLI: adp generate-data --rows 50k
-        CLI->>SDK: generate_data()
-        SDK->>GEN: execute_plan()
-        GEN->>U: output written
-        U->>CLI: adp quality-check
-        CLI->>SDK: run_quality_check()
-        SDK->>QUAL: derive and run rules
-        QUAL-->>SDK: score + report
-    end
+```
+  ┌────────────┐     ┌──────────────────┐     ┌────────────────┐
+  │   scan     │ ──► │     profile      │ ──► │  generate-data │
+  │  schemas   │     │ stats, PII,       │     │  Plan IR +    │
+  │  FKs       │     │ PK/FK confidence  │     │  seeded PRNG  │
+  └────────────┘     └──────────────────┘     └───────┬────────┘
+                                                      │
+                              ┌───────────────────────┼───────────────────────┐
+                              │                       │                       │
+                         ┌────▼────┐            ┌────▼────┐            ┌────▼────┐
+                         │ quality │            │ semantic│            │ NL SQL  │
+                         │ -check  │            │ -model  │            │         │
+                         │ score   │            │ Cube.js │            │ read-   │
+                         └─────────┘            └─────────┘            │ only   │
+                                                                     └────────┘
+```
 
-    rect rgb(20, 50, 40)
-        Note over U,QUAL: Path B: Learn from Data
-        U->>CLI: adp connect
-        CLI->>SDK: connect()
-        U->>CLI: adp scan
-        CLI->>SDK: scan()
-        U->>CLI: adp profile
-        CLI->>SDK: profile()
-        U->>CLI: adp generate-data
-        CLI->>SDK: generate_data()
-        SDK->>GEN: execute_plan()
-        GEN->>U: generated data
-    end
+**Agent integration (MCP):**
 
-    rect rgb(50, 20, 50)
-        Note over U,QUAL: Agent Path
-        U->>AGENTS: Generate 10k rows
-        AGENTS->>SDK: generate_synthetic_data()
-        SDK->>U: output written
-        AGENTS->>SDK: run_quality_check()
-        SDK-->>AGENTS: quality score
-    end
+```
+  Claude / Cursor / Windsurf
+           │
+           │ 11 tools: scan, profile, generate_synthetic_data,
+           │           run_quality_check, preview_data, ...
+           ▼
+     MCP Server (adp mcp-server)
+           │
+           ▼
+      ADPClient
 ```
 
 ---
@@ -174,7 +104,7 @@ pip install ai-data-platform              # core only
 pip install 'ai-data-platform[postgres]'  # PostgreSQL
 pip install 'ai-data-platform[mysql]'     # MySQL
 pip install 'ai-data-platform[mcp]'       # MCP server
-pip install 'ai-data-platform[all]'       # all extras
+pip install 'ai-data-platform[all]'        # all extras
 ```
 
 | Extra | Included in | Purpose |

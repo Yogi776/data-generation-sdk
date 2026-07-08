@@ -16,7 +16,7 @@ Example:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
@@ -27,9 +27,12 @@ from ai_data_platform.config import (
     load_config,
     save_config,
 )
-from ai_data_platform.core.exceptions import GenerationError
+from ai_data_platform.core.exceptions import ADPError, GenerationError
 from ai_data_platform.core.paths import safe_resolve
 from ai_data_platform.metadata.catalog import Catalog
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ai_data_platform.explorer.service import ExplorerService
 
 
 class ADPClient:
@@ -38,6 +41,7 @@ class ADPClient:
     def __init__(self, project_path: str | Path = ".") -> None:
         self.root = Path(project_path).expanduser().resolve()
         self._catalog: Catalog | None = None
+        self._explorer: ExplorerService | None = None
 
     # -- lazy internals ------------------------------------------------------
     @property
@@ -49,6 +53,21 @@ class ADPClient:
         if self._catalog is None:
             self._catalog = Catalog(self.root)
         return self._catalog
+
+    @property
+    def explorer(self) -> ExplorerService:
+        """MCP Data Explorer backend (DuckDB registration + governed queries)."""
+        if self._explorer is None:
+            from ai_data_platform.explorer.service import ExplorerService
+
+            cfg = self.config
+            self._explorer = ExplorerService(
+                self.root,
+                cfg.explorer,
+                default_data_dir=cfg.output_dir,
+                provider_cfg=cfg.model_provider,
+            )
+        return self._explorer
 
     # -- project -------------------------------------------------------------
     def init(self, project_name: str | None = None, *, force: bool = False) -> Path:
@@ -157,15 +176,36 @@ class ADPClient:
         rows_per_table: dict[str, int] | None = None,
         output_format: str | None = None,
         output_dir: str | None = None,
+        dataset: str = "default",
+        register: bool | None = None,
     ) -> dict[str, Any]:
         from ai_data_platform.generator.engine import GenerationPlan, generate
 
         cfg = self.config
         plan = GenerationPlan.model_validate(self.build_plan(rows, tables, seed, rows_per_table))
-        out_dir = safe_resolve(self.root, output_dir or cfg.output_dir)
+        rel_dir = output_dir or cfg.output_dir
+        out_dir = safe_resolve(self.root, rel_dir)
         fmt = output_format or cfg.generation.output_format
         results = generate(plan, out_dir, output_format=fmt)
-        return {"seed": plan.seed, "format": fmt, "tables": results}
+        out: dict[str, Any] = {"seed": plan.seed, "format": fmt, "tables": results}
+
+        # Auto-register generated files into DuckDB for exploration via MCP.
+        should_register = (
+            register
+            if register is not None
+            else (cfg.explorer.enabled and cfg.explorer.auto_register)
+        )
+        if should_register and fmt in ("csv", "parquet", "json"):
+            try:
+                reg = self.explorer.register(dataset=dataset, data_dir=rel_dir)
+                out["explorer"] = {
+                    "dataset": reg["dataset"],
+                    "db_path": reg["db_path"],
+                    "registered": [r["table"] for r in reg["registered"]],
+                }
+            except ADPError as e:
+                out["explorer"] = {"registered": [], "error": str(e)}
+        return out
 
     # -- quality ---------------------------------------------------------------------
     def quality_check(self, data_dir: str | None = None) -> dict[str, Any]:
@@ -208,3 +248,58 @@ class ADPClient:
         from ai_data_platform.docs.generator import generate_docs
 
         return generate_docs(self.catalog, self.config.project)
+
+    # -- explorer (MCP Data Explorer) --------------------------------------------------
+    def register_datasets(
+        self, dataset: str = "default", data_dir: str | None = None, *, replace: bool = True
+    ) -> dict[str, Any]:
+        return self.explorer.register(dataset, data_dir, replace=replace)
+
+    def list_datasets(self) -> list[dict[str, Any]]:
+        return self.explorer.list_datasets()
+
+    def list_explorer_tables(self, dataset: str = "default") -> list[dict[str, Any]]:
+        return self.explorer.list_tables(dataset)
+
+    def describe_dataset_table(self, table: str, dataset: str = "default") -> dict[str, Any]:
+        return self.explorer.describe_table(table, dataset)
+
+    def show_table_schema(self, table: str, dataset: str = "default") -> dict[str, Any]:
+        return self.explorer.show_schema(table, dataset)
+
+    def preview_dataset_table(
+        self, table: str, dataset: str = "default", limit: int = 20
+    ) -> dict[str, Any]:
+        return self.explorer.preview_table(table, dataset, limit)
+
+    def get_table_row_count(self, table: str, dataset: str = "default") -> dict[str, Any]:
+        return self.explorer.get_row_count(table, dataset)
+
+    def profile_dataset_table(self, table: str, dataset: str = "default") -> dict[str, Any]:
+        return self.explorer.profile_table(table, dataset)
+
+    def execute_explorer_sql(
+        self, sql: str, dataset: str = "default", max_rows: int | None = None
+    ) -> dict[str, Any]:
+        return self.explorer.execute_sql(sql, dataset, max_rows)
+
+    def explain_explorer_sql(self, sql: str, dataset: str = "default") -> dict[str, Any]:
+        return self.explorer.explain_sql(sql, dataset)
+
+    def export_explorer_result(
+        self, sql: str, filename: str, dataset: str = "default", fmt: str = "csv"
+    ) -> dict[str, Any]:
+        return self.explorer.export_query_result(sql, filename, dataset, fmt)
+
+    def suggest_analytics_queries(
+        self, dataset: str = "default", table: str | None = None, limit: int = 8
+    ) -> dict[str, Any]:
+        return self.explorer.suggest_analytics_queries(dataset, table, limit)
+
+    def generate_business_insights(self, sql: str, dataset: str = "default") -> dict[str, Any]:
+        return self.explorer.generate_business_insights(sql, dataset)
+
+    def validate_business_questions(
+        self, questions: list[str], dataset: str = "default"
+    ) -> dict[str, Any]:
+        return self.explorer.validate_business_questions(questions, dataset)

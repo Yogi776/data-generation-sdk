@@ -85,6 +85,50 @@ class SemanticConfig(BaseModel):
     format: Literal["generic", "cube"] = "generic"
 
 
+class ExplorerConfig(BaseModel):
+    """MCP Data Explorer: DuckDB-backed exploration of generated datasets.
+
+    All limits are enforced defensively (read-only connection + SQL guard +
+    LIMIT wrap + query timeout). `metadata_dsn` lets the dataset catalog live in
+    Postgres instead of the default project-local SQLite.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    # Register generated files into DuckDB automatically after generate-data.
+    auto_register: bool = True
+    # Persistent DuckDB database file, relative to the project's .adp/ dir.
+    db_filename: str = "explorer.duckdb"
+    # Hard cap on rows returned by execute_sql / export (result is truncated,
+    # `truncated: true` is flagged, and large outputs may be sampled).
+    max_result_rows: int = Field(default=1000, ge=1, le=1_000_000)
+    # Best-effort per-query wall-clock timeout (DuckDB interrupt watchdog).
+    query_timeout_seconds: float = Field(default=30.0, gt=0, le=600)
+    # Best-effort guard: refuse queries whose EXPLAIN estimates exceed this many
+    # scanned rows. None disables the check.
+    max_scan_rows: int | None = Field(default=50_000_000, ge=1)
+    # Return a uniform sample (USING SAMPLE) when a result exceeds max_result_rows
+    # instead of a head() truncation.
+    sample_large_results: bool = True
+    # Optional external metadata store, e.g. "postgresql+psycopg://user@host/adp".
+    # Credentials must use ${ENV_VAR} interpolation. None => project-local SQLite.
+    metadata_dsn: str | None = None
+
+    @field_validator("metadata_dsn")
+    @classmethod
+    def _no_plaintext_secrets(cls, v: str | None) -> str | None:
+        if v and _SECRET_SHAPED.search(v):
+            raise ValueError(
+                "metadata_dsn appears to contain a plaintext secret; "
+                "use ${ENV_VAR} interpolation instead"
+            )
+        return v
+
+    def resolved_metadata_dsn(self) -> str | None:
+        return interpolate_env(self.metadata_dsn) if self.metadata_dsn else None
+
+
 class ProjectConfig(BaseModel):
     """The adp.yaml schema. `version` guards future migrations."""
 
@@ -98,6 +142,7 @@ class ProjectConfig(BaseModel):
     model_provider: ModelProviderConfig = Field(default_factory=ModelProviderConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     semantic: SemanticConfig = Field(default_factory=SemanticConfig)
+    explorer: ExplorerConfig = Field(default_factory=ExplorerConfig)
 
     def source(self, name: str) -> SourceConfig:
         for s in self.sources:

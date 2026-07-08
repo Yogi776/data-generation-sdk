@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import polars as pl
 
 from ai_data_platform.sdk import ADPClient
@@ -58,3 +60,55 @@ def test_sql_output_format(profiled_project: ADPClient) -> None:
     text = Path(result["tables"]["customers"]["path"]).read_text(encoding="utf-8")
     assert 'INSERT INTO "customers"' in text
     assert text.count("(") >= 50
+
+
+def test_streaming_across_chunks(tmp_path: Path) -> None:
+    """Generation streams chunk-by-chunk (bounded memory); keys and FK integrity
+    must hold across chunk boundaries, not just within a single chunk."""
+    from ai_data_platform.generator.engine import (
+        ColumnPlan,
+        ForeignKeyPlan,
+        GenerationPlan,
+        TablePlan,
+        generate,
+    )
+
+    # chunk_rows=100 forces many chunks for both tables
+    plan = GenerationPlan(
+        seed=7,
+        chunk_rows=100,
+        tables=[
+            TablePlan(
+                name="customers",
+                rows=550,
+                columns=[ColumnPlan(name="customer_id", sampler="sequence", params={"start": 1})],
+            ),
+            TablePlan(
+                name="orders",
+                rows=1234,
+                columns=[ColumnPlan(name="order_id", sampler="uuid")],
+                foreign_keys=[
+                    ForeignKeyPlan(
+                        column="customer_id", parent_table="customers", parent_column="customer_id"
+                    )
+                ],
+            ),
+        ],
+    )
+    r1 = generate(plan, tmp_path / "a", output_format="parquet")
+    cust = pl.read_parquet(r1["customers"]["path"])
+    orders = pl.read_parquet(r1["orders"]["path"])
+
+    assert r1["customers"]["rows"] == 550 and len(cust) == 550
+    assert r1["orders"]["rows"] == 1234 and len(orders) == 1234
+    # sequence PK contiguous across chunk boundaries (offset math)
+    assert cust.get_column("customer_id").to_list() == list(range(1, 551))
+    # uuid PK unique across all chunks
+    assert orders.get_column("order_id").n_unique() == 1234
+    # FK zero-orphans across chunks
+    parent = set(cust.get_column("customer_id").to_list())
+    assert set(orders.get_column("customer_id").to_list()) <= parent
+
+    # same (seed, chunk_rows) is byte-identical across runs
+    r2 = generate(plan, tmp_path / "b", output_format="parquet")
+    assert pl.read_parquet(r1["orders"]["path"]).equals(pl.read_parquet(r2["orders"]["path"]))

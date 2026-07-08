@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from ai_data_platform.core.exceptions import GenerationError
 from ai_data_platform.core.logging import get_logger
 from ai_data_platform.generator.samplers import SamplerSpec, build_sampler, infer_sampler
-from ai_data_platform.generator.writers import write_output
+from ai_data_platform.generator.writers import ChunkWriter
 
 if TYPE_CHECKING:  # pragma: no cover
     from pathlib import Path
@@ -247,13 +247,61 @@ def _apply_derives(df: pl.DataFrame, tp: TablePlan, rng: np.random.Generator) ->
     return df
 
 
+def _build_chunk(
+    plan: GenerationPlan,
+    tp: TablePlan,
+    chunk_idx: int,
+    offset: int,
+    n: int,
+    key_pool: dict[tuple[str, str], pl.Series],
+    o2o_perm: dict[str, np.ndarray],
+) -> pl.DataFrame:
+    """Build one chunk of `n` rows. RNG is consumed columns-then-FKs in declared
+    order so output is byte-identical regardless of chunk size."""
+    rng = _table_rng(plan.seed, tp.name, chunk_idx)
+    data: dict[str, pl.Series] = {}
+    for cp in tp.columns:
+        sampler = build_sampler(SamplerSpec(cp.sampler, dict(cp.params)))
+        if cp.sampler == "sequence":
+            start = offset + int(cp.params.get("start", 1))
+            sampler = build_sampler(SamplerSpec("sequence", {"start": start}))
+        series = sampler(rng, n)
+        if cp.null_ratio > 0:
+            mask = pl.Series(rng.random(n) < cp.null_ratio)
+            series = (
+                pl.DataFrame({"v": series, "m": mask})
+                .select(pl.when(pl.col("m")).then(None).otherwise(pl.col("v")).alias("v"))
+                .get_column("v")
+            )
+        data[cp.name] = series
+    for fk in tp.foreign_keys:
+        pool = key_pool.get((fk.parent_table, fk.parent_column))
+        if pool is None or len(pool) == 0:
+            raise GenerationError(
+                f"No parent keys for {tp.name}.{fk.column} -> "
+                f"{fk.parent_table}.{fk.parent_column}.",
+                hint="Parent table must be generated in the same run "
+                "(check relationships with `adp scan`).",
+            )
+        if fk.column in o2o_perm:
+            idx = o2o_perm[fk.column][offset : offset + n]
+        else:
+            idx = rng.integers(0, len(pool), size=n)
+        data[fk.column] = pl.Series(pool.gather(idx))
+    return _apply_derives(pl.DataFrame(data), tp, rng)
+
+
 def generate(
     plan: GenerationPlan,
     output_dir: str | Path,
     *,
     output_format: str = "parquet",
 ) -> dict[str, Any]:
-    """Execute a plan. Returns {table: {rows, path}}."""
+    """Execute a plan, streaming each chunk to disk. Returns {table: {rows, path}}.
+
+    Peak memory is bounded to one chunk plus the parent key pools (only the
+    key columns of already-generated tables), never a whole table.
+    """
     key_pool: dict[tuple[str, str], pl.Series] = {}
     results: dict[str, Any] = {}
 
@@ -276,53 +324,32 @@ def generate(
                     plan.seed, f"{tp.name}:o2o:{fk.column}", 0
                 ).permutation(len(pool))
 
-        frames: list[pl.DataFrame] = []
+        writer = ChunkWriter(tp.name, output_dir, output_format)
+        # only the key columns are retained in memory (for children), not the rows
+        key_cols = [cp.name for cp in tp.columns if cp.sampler in ("sequence", "uuid")]
+        key_accum: dict[str, list[pl.Series]] = {c: [] for c in key_cols}
+        total = 0
         remaining = tp.rows
         chunk_idx = 0
-        while remaining > 0:
-            n = min(remaining, plan.chunk_rows)
+        # always write at least one (possibly empty) chunk so the file + schema exist
+        while True:
+            n = min(remaining, plan.chunk_rows) if remaining > 0 else 0
             offset = tp.rows - remaining
-            rng = _table_rng(plan.seed, tp.name, chunk_idx)
-            data: dict[str, pl.Series] = {}
-            for cp in tp.columns:
-                sampler = build_sampler(SamplerSpec(cp.sampler, dict(cp.params)))
-                if cp.sampler == "sequence":
-                    start = offset + int(cp.params.get("start", 1))
-                    sampler = build_sampler(SamplerSpec("sequence", {"start": start}))
-                series = sampler(rng, n)
-                if cp.null_ratio > 0:
-                    mask = pl.Series(rng.random(n) < cp.null_ratio)
-                    series = (
-                        pl.DataFrame({"v": series, "m": mask})
-                        .select(pl.when(pl.col("m")).then(None).otherwise(pl.col("v")).alias("v"))
-                        .get_column("v")
-                    )
-                data[cp.name] = series
-            for fk in tp.foreign_keys:
-                pool = key_pool.get((fk.parent_table, fk.parent_column))
-                if pool is None or len(pool) == 0:
-                    raise GenerationError(
-                        f"No parent keys for {tp.name}.{fk.column} -> "
-                        f"{fk.parent_table}.{fk.parent_column}.",
-                        hint="Parent table must be generated in the same run "
-                        "(check relationships with `adp scan`).",
-                    )
-                if fk.column in o2o_perm:
-                    idx = o2o_perm[fk.column][offset : offset + n]
-                else:
-                    idx = rng.integers(0, len(pool), size=n)
-                data[fk.column] = pl.Series(pool.gather(idx))
-            chunk_df = _apply_derives(pl.DataFrame(data), tp, rng)
-            frames.append(chunk_df)
+            chunk_df = _build_chunk(plan, tp, chunk_idx, offset, n, key_pool, o2o_perm)
+            writer.write_chunk(chunk_df)
+            for c in key_cols:
+                key_accum[c].append(chunk_df.get_column(c))
+            total += n
             remaining -= n
             chunk_idx += 1
+            if remaining <= 0:
+                break
+        path = writer.close()
 
-        df = pl.concat(frames) if len(frames) > 1 else frames[0]
         # register this table's PK values for children
-        for cp in tp.columns:
-            if cp.sampler in ("sequence", "uuid"):
-                key_pool[(tp.name, cp.name)] = df.get_column(cp.name)
-        path = write_output(df, tp.name, output_dir, output_format)
-        results[tp.name] = {"rows": len(df), "path": str(path)}
-        log.info("generated %s: %d rows -> %s", tp.name, len(df), path)
+        for c in key_cols:
+            series = key_accum[c]
+            key_pool[(tp.name, c)] = pl.concat(series) if len(series) > 1 else series[0]
+        results[tp.name] = {"rows": total, "path": str(path)}
+        log.info("generated %s: %d rows -> %s", tp.name, total, path)
     return results

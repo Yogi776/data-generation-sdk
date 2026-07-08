@@ -225,6 +225,120 @@ def create_server(project_path: str = ".") -> FastMCP:
         """Generate a Markdown data dictionary for the whole catalog."""
         return _ok({"markdown": client.generate_docs()})
 
+    # -- MCP Data Explorer (DuckDB) --------------------------------------------
+    # Generated files are auto-registered into DuckDB after
+    # generate_synthetic_data. These tools explore them with governed, read-only
+    # SQL. All are read-only; export writes only inside the project export dir.
+
+    @mcp.tool()
+    @_safe
+    def register_datasets(dataset: str = "default", data_dir: str | None = None) -> str:
+        """Register generated files (parquet/csv/json) in a directory into DuckDB
+        as views for exploration. Usually automatic after generation; call this to
+        (re)register manually or to register a specific data_dir under a named
+        dataset."""
+        return _ok(client.register_datasets(dataset, data_dir))
+
+    @mcp.tool()
+    @_safe
+    def list_datasets() -> str:
+        """List registered datasets with table counts, total rows, and DB path.
+        Start here to discover what data is available to query."""
+        return _ok(client.list_datasets())
+
+    @mcp.tool()
+    @_safe
+    def list_tables(dataset: str = "default") -> str:
+        """List tables in a dataset with format, row count, column count, and
+        partition info."""
+        return _ok(client.list_explorer_tables(dataset))
+
+    @mcp.tool()
+    @_safe
+    def describe_table(table: str, dataset: str = "default") -> str:
+        """Full description of a registered table: source file, format, row count,
+        columns (name/type/nullable), and partition keys."""
+        return _ok(client.describe_dataset_table(table, dataset))
+
+    @mcp.tool()
+    @_safe
+    def show_schema(table: str, dataset: str = "default") -> str:
+        """Show a table's column schema as CREATE-VIEW-style DDL plus a structured
+        column list."""
+        return _ok(client.show_table_schema(table, dataset))
+
+    @mcp.tool()
+    @_safe
+    def preview_table(table: str, dataset: str = "default", limit: int = 20) -> str:
+        """Preview the first N rows of a table (max 200)."""
+        return _ok(client.preview_dataset_table(table, dataset, min(limit, 200)))
+
+    @mcp.tool()
+    @_safe
+    def get_row_count(table: str, dataset: str = "default") -> str:
+        """Exact row count for a registered table."""
+        return _ok(client.get_table_row_count(table, dataset))
+
+    @mcp.tool()
+    @_safe
+    def profile_table(table: str, dataset: str = "default") -> str:
+        """Per-column profile: null counts/fractions, distinct counts, min/max/avg/
+        stddev for numerics, date ranges, and top values for low-cardinality
+        columns. Large tables are sampled (flagged sampled=true)."""
+        return _ok(client.profile_dataset_table(table, dataset))
+
+    @mcp.tool()
+    @_safe
+    def execute_sql(sql: str, dataset: str = "default", max_rows: int | None = None) -> str:
+        """Run a single read-only SELECT/WITH query (DuckDB dialect) against the
+        dataset. Enforced: SELECT-only guard, read-only connection, row limit
+        (result flagged truncated/sampled), scan-size guard, and query timeout.
+        Query the registered table names directly — raw file readers are blocked."""
+        return _ok(client.execute_explorer_sql(sql, dataset, max_rows))
+
+    @mcp.tool()
+    @_safe
+    def explain_sql(sql: str, dataset: str = "default") -> str:
+        """Return the DuckDB query plan and an estimated row count for a SELECT —
+        inspect cost before running."""
+        return _ok(client.explain_explorer_sql(sql, dataset))
+
+    @mcp.tool()
+    @_safe
+    def suggest_analytics_queries(
+        dataset: str = "default", table: str | None = None, limit: int = 8
+    ) -> str:
+        """Suggest useful analytical SQL (trends, rankings, distributions, joins)
+        derived from the schema and — if an LLM provider is configured — enriched
+        with model-generated ideas. Ready to run via execute_sql."""
+        return _ok(client.suggest_analytics_queries(dataset, table, min(limit, 25)))
+
+    @mcp.tool()
+    @_safe
+    def generate_business_insights(sql: str, dataset: str = "default") -> str:
+        """Execute a SELECT and summarize it: key findings, anomalies, trends,
+        data-quality notes, dashboard-ready metrics, and recommended follow-up
+        queries. Narrative is LLM-enhanced when a provider is configured, else
+        deterministic."""
+        return _ok(client.generate_business_insights(sql, dataset))
+
+    @mcp.tool()
+    @_safe
+    def validate_business_questions(questions: list[str], dataset: str = "default") -> str:
+        """Given business questions in plain language, judge which are answerable
+        from the registered tables/columns and suggest a starting SQL for each."""
+        return _ok(client.validate_business_questions(questions, dataset))
+
+    @mcp.tool()
+    @_safe
+    def export_query_result(
+        sql: str, filename: str, dataset: str = "default", format: str = "csv"
+    ) -> str:
+        """Run a SELECT and write the full result to a file (csv/parquet/json)
+        inside the project's export directory. The destination is sandboxed — only
+        a filename is accepted, never an arbitrary path."""
+        return _ok(client.export_explorer_result(sql, filename, dataset, format))
+
     # -- resources -----------------------------------------------------------
     @mcp.resource("catalog://tables")
     def catalog_tables() -> str:

@@ -166,7 +166,7 @@ def _column_profile(df: pl.DataFrame, col: str) -> dict[str, Any]:
 
 
 def _json_safe(v: Any) -> Any:
-    if v is None or isinstance(v, (int, float, str, bool)):
+    if v is None or isinstance(v, int | float | str | bool):
         return v
     return str(v)
 

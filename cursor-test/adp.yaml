@@ -1,0 +1,18 @@
+version: 1
+project: cursor-test
+environment: dev
+output_dir: output
+sources: []
+model_provider:
+  provider: minimax
+  base_url: https://api.minimax.io/v1
+  model: MiniMax-Text-01
+  api_key_env: MINIMAX_API_KEY
+  timeout_seconds: 60.0
+generation:
+  default_rows: 1000
+  seed: 42
+  chunk_rows: 100000
+  output_format: parquet
+semantic:
+  format: generic

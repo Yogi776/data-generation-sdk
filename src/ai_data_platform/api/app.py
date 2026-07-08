@@ -41,6 +41,36 @@ class ProfileRequest(BaseModel):
     sample_rows: int = Field(default=10_000, ge=100, le=1_000_000)
 
 
+class ExplorerRegisterRequest(BaseModel):
+    dataset: str = "default"
+    data_dir: str | None = None
+    replace: bool = True
+
+
+class ExplorerSqlRequest(BaseModel):
+    sql: str
+    dataset: str = "default"
+    max_rows: int | None = Field(default=None, ge=1, le=1_000_000)
+
+
+class ExplorerSuggestRequest(BaseModel):
+    dataset: str = "default"
+    table: str | None = None
+    limit: int = Field(default=8, ge=1, le=25)
+
+
+class ExplorerValidateRequest(BaseModel):
+    questions: list[str]
+    dataset: str = "default"
+
+
+class ExplorerExportRequest(BaseModel):
+    sql: str
+    filename: str
+    dataset: str = "default"
+    format: str = "csv"
+
+
 def create_app(project_path: str = ".") -> FastAPI:
     app = FastAPI(
         title="ai-data-platform",
@@ -108,6 +138,59 @@ def create_app(project_path: str = ".") -> FastAPI:
     @app.post("/docs/generate")
     def docs() -> dict[str, str]:
         return {"markdown": _run(client.generate_docs)}
+
+    # -- MCP Data Explorer (DuckDB) --------------------------------------------
+    @app.post("/explorer/register")
+    def explorer_register(req: ExplorerRegisterRequest) -> dict[str, Any]:
+        return _run(client.register_datasets, req.dataset, req.data_dir, replace=req.replace)
+
+    @app.get("/explorer/datasets")
+    def explorer_datasets() -> list[dict[str, Any]]:
+        return _run(client.list_datasets)
+
+    @app.get("/explorer/datasets/{dataset}/tables")
+    def explorer_tables(dataset: str = "default") -> list[dict[str, Any]]:
+        return _run(client.list_explorer_tables, dataset)
+
+    @app.get("/explorer/datasets/{dataset}/tables/{table}")
+    def explorer_describe(table: str, dataset: str = "default") -> dict[str, Any]:
+        return _run(client.describe_dataset_table, table, dataset)
+
+    @app.get("/explorer/datasets/{dataset}/tables/{table}/schema")
+    def explorer_schema(table: str, dataset: str = "default") -> dict[str, Any]:
+        return _run(client.show_table_schema, table, dataset)
+
+    @app.get("/explorer/datasets/{dataset}/tables/{table}/preview")
+    def explorer_preview(table: str, dataset: str = "default", limit: int = 20) -> dict[str, Any]:
+        return _run(client.preview_dataset_table, table, dataset, limit)
+
+    @app.get("/explorer/datasets/{dataset}/tables/{table}/profile")
+    def explorer_profile(table: str, dataset: str = "default") -> dict[str, Any]:
+        return _run(client.profile_dataset_table, table, dataset)
+
+    @app.post("/explorer/sql")
+    def explorer_sql(req: ExplorerSqlRequest) -> dict[str, Any]:
+        return _run(client.execute_explorer_sql, req.sql, req.dataset, req.max_rows)
+
+    @app.post("/explorer/explain")
+    def explorer_explain(req: ExplorerSqlRequest) -> dict[str, Any]:
+        return _run(client.explain_explorer_sql, req.sql, req.dataset)
+
+    @app.post("/explorer/suggest")
+    def explorer_suggest(req: ExplorerSuggestRequest) -> dict[str, Any]:
+        return _run(client.suggest_analytics_queries, req.dataset, req.table, req.limit)
+
+    @app.post("/explorer/insights")
+    def explorer_insights(req: ExplorerSqlRequest) -> dict[str, Any]:
+        return _run(client.generate_business_insights, req.sql, req.dataset)
+
+    @app.post("/explorer/validate")
+    def explorer_validate(req: ExplorerValidateRequest) -> dict[str, Any]:
+        return _run(client.validate_business_questions, req.questions, req.dataset)
+
+    @app.post("/explorer/export")
+    def explorer_export(req: ExplorerExportRequest) -> dict[str, Any]:
+        return _run(client.export_explorer_result, req.sql, req.filename, req.dataset, req.format)
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:

@@ -82,3 +82,34 @@ class UnsafeSQLError(ADPError):
 
 class UnsafePathError(ADPError):
     """A file write attempted to escape the project root."""
+
+
+class ExplorerError(ADPError):
+    """MCP Data Explorer failure (registration or query engine)."""
+
+
+class DatasetNotFoundError(ExplorerError):
+    def __init__(self, dataset: str, known: list[str]) -> None:
+        super().__init__(
+            f"Dataset {dataset!r} is not registered in the explorer.",
+            hint=(
+                f"Known datasets: {', '.join(known) or '(none)'}. "
+                "Generate data (auto-registers) or run `adp explore register`."
+            ),
+        )
+
+
+class ExplorerTableNotFoundError(ExplorerError):
+    def __init__(self, table: str, known: list[str]) -> None:
+        super().__init__(
+            f"Table {table!r} is not registered in the explorer.",
+            hint=f"Registered tables: {', '.join(known) or '(none)'}.",
+        )
+
+
+class QueryTimeoutError(ExplorerError):
+    """A query exceeded the configured wall-clock timeout and was interrupted."""
+
+
+class QueryTooLargeError(ExplorerError):
+    """A query's estimated scan exceeded the configured max_scan_rows guard."""

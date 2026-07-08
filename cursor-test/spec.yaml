@@ -1,0 +1,693 @@
+# Declarative dataset spec — dim_customer + fact_transaction
+# No seed data, no Python:
+#   adp apply-spec spec.yaml
+#   adp generate-data --rows 50000
+version: 1
+tables:
+  - name: dim_customer
+    joins:
+      # ONE TO MANY: one customer has many transactions
+      - name: fact_transaction
+        relationship: one_to_many
+        sql: "{TABLE.customer_id} = {fact_transaction.customer_id}"
+
+      # ONE TO ONE: each customer has exactly one KYC record (unique FK)
+      - name: customer_kyc
+        relationship: one_to_one
+        sql: "{TABLE.customer_id} = {customer_kyc.customer_id}"
+    columns:
+      - name: customer_id
+        type: uuid
+        primary_key: true
+
+      - name: customer_number
+        type: string
+
+      - name: first_name
+        type: string
+
+      - name: last_name
+        type: string
+
+      - name: full_name
+        type: string
+
+      - name: gender
+        type: string
+        values:
+          Male: 48
+          Female: 50
+          Other: 2
+
+      - name: date_of_birth
+        type: date
+        start: 1960-01-01
+        end: 2006-12-31
+
+      - name: age
+        type: int
+        min: 18
+        max: 66
+
+      - name: email
+        type: string
+
+      - name: phone_number
+        type: string
+
+      - name: alternate_phone
+        type: string
+        null_ratio: 0.6
+
+      - name: customer_type
+        type: string
+        values:
+          New: 70
+          Returning: 20
+          VIP: 10
+
+      - name: loyalty_tier
+        type: string
+        values:
+          Bronze: 50
+          Silver: 30
+          Gold: 15
+          Platinum: 5
+
+      - name: loyalty_points
+        type: int
+        mean: 480
+        std: 700
+        min: 0
+        max: 20000
+
+      - name: signup_date
+        type: date
+        start: 2020-01-01
+        end: 2026-06-01
+
+      - name: account_status
+        type: string
+        values:
+          Active: 85
+          Inactive: 13
+          Suspended: 2
+
+      - name: preferred_language
+        type: string
+        values:
+          en: 50
+          hi: 25
+          ta: 10
+          te: 8
+          mr: 7
+
+      - name: preferred_currency
+        type: string
+        values:
+          INR: 93
+          USD: 7
+
+      - name: preferred_device
+        type: string
+        values:
+          Mobile: 68
+          Desktop: 26
+          Tablet: 6
+
+      - name: preferred_channel
+        type: string
+        values:
+          Mobile App: 50
+          Website: 35
+          Marketplace: 15
+
+      - name: marketing_opt_in
+        type: bool
+        values:
+          "true": 62
+          "false": 38
+
+      - name: customer_segment
+        type: string
+        values:
+          Budget: 55
+          Premium: 35
+          Luxury: 10
+
+      - name: occupation
+        type: string
+        values:
+          Engineer: 20
+          Student: 18
+          Manager: 15
+          Teacher: 12
+          Sales: 10
+          Self-employed: 9
+          Doctor: 8
+          Designer: 8
+
+      - name: annual_income
+        type: float
+        mean: 850000
+        std: 550000
+        min: 100000
+
+      - name: marital_status
+        type: string
+        values:
+          Single: 45
+          Married: 55
+
+      # -- hierarchical dependency: country -> state -> city, always consistent
+      - name: country
+        type: string
+        values:
+          India: 92
+          UAE: 8
+
+      - name: state
+        type: string
+        values_by:
+          column: country
+          mapping:
+            India:
+              Maharashtra: 26
+              Karnataka: 20
+              Tamil Nadu: 15
+              Delhi: 13
+              Telangana: 13
+              Gujarat: 13
+            UAE:
+              Dubai: 70
+              Abu Dhabi: 30
+
+      - name: city
+        type: string
+        values_by:
+          column: state
+          mapping:
+            Maharashtra:
+              Mumbai: 55
+              Pune: 35
+              Nagpur: 10
+            Karnataka:
+              Bangalore: 82
+              Mysore: 18
+            Tamil Nadu:
+              Chennai: 75
+              Coimbatore: 25
+            Delhi:
+              New Delhi: 100
+            Telangana:
+              Hyderabad: 100
+            Gujarat:
+              Ahmedabad: 62
+              Surat: 38
+            Dubai:
+              Dubai: 100
+            Abu Dhabi:
+              Abu Dhabi: 100
+
+      - name: district
+        type: string
+
+      - name: postal_code
+        type: string
+
+      - name: timezone
+        type: string
+        values:
+          Asia/Kolkata: 100
+
+      - name: address_line1
+        type: string
+
+      - name: address_line2
+        type: string
+        null_ratio: 0.5
+
+      - name: latitude
+        type: float
+        min: 8.0
+        max: 32.0
+        mean: 20.0
+        std: 6.0
+
+      - name: longitude
+        type: float
+        min: 68.0
+        max: 92.0
+        mean: 78.0
+        std: 6.0
+
+      - name: total_orders
+        type: int
+        mean: 5
+        std: 6
+        min: 1
+        max: 120
+
+      - name: total_spent
+        type: float
+        mean: 6200
+        std: 8000
+        min: 100
+
+      - name: average_order_value
+        type: float
+        mean: 1250
+        std: 700
+        min: 50
+
+      - name: first_purchase_date
+        type: date
+        start: 2020-01-01
+        end: 2026-06-01
+
+      - name: last_purchase_date
+        type: date
+        start: 2020-06-01
+        end: 2026-06-30
+
+      - name: churn_risk
+        type: string
+        values:
+          Low: 60
+          Medium: 28
+          High: 12
+
+      - name: customer_lifetime_value
+        type: float
+        mean: 9000
+        std: 12000
+        min: 100
+
+      - name: acquisition_source
+        type: string
+        values:
+          Google: 30
+          Organic: 22
+          Facebook: 20
+          Instagram: 15
+          Referral: 13
+
+      - name: acquisition_campaign
+        type: string
+        values:
+          none: 35
+          diwali_2025: 20
+          summer_sale: 20
+          new_user_50: 15
+          retarget_q3: 10
+
+      - name: referral_code
+        type: string
+        null_ratio: 0.75
+
+      - name: created_at
+        type: datetime
+        start: 2020-01-01
+        end: 2026-06-01
+
+      - name: updated_at
+        type: datetime
+        start: 2020-01-01
+        end: 2026-06-30
+
+  - name: fact_transaction
+    joins:
+      # MANY TO ONE: many transactions ship from one warehouse
+      - name: dim_warehouse
+        relationship: many_to_one
+        sql: "{TABLE.warehouse_id} = {dim_warehouse.warehouse_id}"
+    columns:
+      - name: transaction_id
+        type: uuid
+        primary_key: true
+
+      - name: order_number
+        type: string
+
+      - name: customer_id
+        type: uuid
+        # FK declared in the joins: section below (one_to_many from dim_customer)
+
+      - name: product_id
+        type: uuid
+
+      - name: seller_id
+        type: uuid
+
+      - name: warehouse_id
+        type: uuid
+
+      - name: order_date
+        type: datetime
+        start: 2025-01-01
+        end: 2026-06-30
+
+      # -- temporal dependencies: always ordered after order_date -------------
+      - name: payment_date
+        type: datetime
+        start: 2025-01-01
+        end: 2026-06-30
+        after:
+          column: order_date
+          min_minutes: 1
+          max_minutes: 120
+
+      - name: shipment_date
+        type: datetime
+        start: 2025-01-01
+        end: 2026-06-30
+        after:
+          column: order_date
+          min_minutes: 240      # 4 hours
+          max_minutes: 4320     # 3 days
+
+      - name: delivery_date
+        type: datetime
+        start: 2025-01-02
+        end: 2026-06-30
+        after:
+          column: shipment_date
+          min_minutes: 1440     # 1 day
+          max_minutes: 10080    # 7 days
+
+      - name: expected_delivery_date
+        type: datetime
+        start: 2025-01-02
+        end: 2026-06-30
+        after:
+          column: order_date
+          min_minutes: 2880     # 2 days
+          max_minutes: 12960    # 9 days
+
+      - name: quantity
+        type: int
+        mean: 2
+        std: 1
+        min: 1
+        max: 12
+
+      - name: unit_price
+        type: float
+        mean: 1200
+        std: 1400
+        min: 20
+
+      - name: discount_amount
+        type: float
+        mean: 90
+        std: 160
+        min: 0
+
+      - name: coupon_code
+        type: string
+        null_ratio: 0.65
+        values:
+          SAVE10: 30
+          SAVE20: 30
+          SAVE30: 20
+          FIRST50: 20
+
+      # -- arithmetic dependencies: row-consistent money math ------------------
+      - name: subtotal
+        type: float
+        expr: unit_price * quantity - discount_amount
+
+      - name: tax_amount
+        type: float
+        expr: subtotal * 0.18
+
+      - name: shipping_charge
+        type: float
+        values:
+          "49.0": 70
+          "99.0": 20
+          "199.0": 10
+
+      - name: packaging_charge
+        type: float
+        min: 5
+        max: 25
+        mean: 15
+        std: 6
+
+      - name: platform_fee
+        type: float
+        expr: subtotal * 0.02
+
+      - name: payment_gateway_fee
+        type: float
+        expr: subtotal * 0.015
+
+      - name: total_amount
+        type: float
+        expr: subtotal + tax_amount + shipping_charge + packaging_charge
+
+      - name: currency
+        type: string
+        values:
+          INR: 93
+          USD: 7
+
+      - name: payment_method
+        type: string
+        values:
+          UPI: 40
+          Credit Card: 22
+          Debit Card: 15
+          Wallet: 10
+          COD: 8
+          PayPal: 5
+
+      - name: payment_status
+        type: string
+        values:
+          Paid: 90
+          Pending: 4
+          Failed: 3
+          Refunded: 3
+
+      - name: order_status
+        type: string
+        values:
+          Delivered: 82
+          Shipped: 6
+          Processing: 5
+          Cancelled: 4
+          Returned: 3
+
+      - name: return_status
+        type: string
+        values:
+          None: 92
+          Completed: 4
+          Requested: 2
+          Approved: 2
+
+      # -- conditional dependencies: refunds exist only for returned orders ----
+      - name: refund_amount
+        type: float
+        expr: CASE WHEN order_status = 'Returned' THEN total_amount ELSE 0.0 END
+
+      - name: refund_reason
+        type: string
+        values:
+          damaged: 30
+          wrong_item: 25
+          not_as_described: 25
+          size_issue: 20
+        null_unless: order_status = 'Returned'
+
+      - name: shipping_provider
+        type: string
+        values:
+          Delhivery: 30
+          BlueDart: 22
+          Ekart: 22
+          DTDC: 14
+          XpressBees: 12
+
+      - name: tracking_number
+        type: string
+
+      - name: fulfillment_type
+        type: string
+        values:
+          Standard: 70
+          Express: 20
+          Same Day: 10
+
+      - name: delivery_partner
+        type: string
+        values:
+          3PL: 65
+          InHouse: 35
+
+      - name: warehouse_location
+        type: string
+        values:
+          Bhiwandi: 25
+          Hoskote: 20
+          Gurgaon: 20
+          Chakan: 20
+          Hyderabad: 15
+
+      - name: customer_rating
+        type: int
+        values:
+          "5": 55
+          "4": 25
+          "3": 10
+          "2": 6
+          "1": 4
+
+      - name: review_id
+        type: uuid
+        null_ratio: 0.6
+
+      - name: review_sentiment
+        type: string
+        values:
+          Positive: 72
+          Neutral: 18
+          Negative: 10
+
+      - name: fraud_score
+        type: float
+        mean: 0.06
+        std: 0.12
+        min: 0.0
+        max: 1.0
+
+      - name: fraud_flag
+        type: bool
+        values:
+          "false": 99.5
+          "true": 0.5
+
+      - name: device_type
+        type: string
+        values:
+          Android: 55
+          Desktop: 23
+          iPhone: 22
+
+      - name: browser
+        type: string
+        values:
+          Chrome: 60
+          Safari: 22
+          Edge: 10
+          Firefox: 8
+
+      - name: operating_system
+        type: string
+        values:
+          Android: 52
+          iOS: 20
+          Windows: 20
+          macOS: 8
+
+      - name: ip_address
+        type: string
+
+      - name: session_id
+        type: uuid
+
+      - name: cart_id
+        type: uuid
+
+      - name: checkout_duration_seconds
+        type: int
+        mean: 130
+        std: 110
+        min: 10
+        max: 1800
+
+      - name: source_channel
+        type: string
+        values:
+          App: 47
+          Website: 38
+          Marketplace: 15
+
+      - name: marketing_campaign
+        type: string
+        values:
+          none: 52
+          diwali_2025: 18
+          summer_sale: 18
+          retarget_q3: 12
+
+      - name: acquisition_source
+        type: string
+        values:
+          Google: 35
+          Organic: 28
+          Facebook: 22
+          Referral: 15
+
+      - name: created_at
+        type: datetime
+        start: 2025-01-01
+        end: 2026-06-30
+
+      - name: updated_at
+        type: datetime
+        start: 2025-01-01
+        end: 2026-06-30
+
+  # 1:1 companion table — every customer has exactly one KYC record
+  - name: customer_kyc
+    columns:
+      - name: kyc_id
+        type: uuid
+        primary_key: true
+
+      - name: customer_id
+        type: uuid
+
+      - name: kyc_status
+        type: string
+        values:
+          Verified: 78
+          Pending: 15
+          Rejected: 7
+
+      - name: pan_verified
+        type: bool
+        values:
+          "true": 82
+          "false": 18
+
+      - name: verified_at
+        type: datetime
+        start: 2020-01-01
+        end: 2026-06-30
+
+  # dimension for the N:1 join example
+  - name: dim_warehouse
+    columns:
+      - name: warehouse_id
+        type: uuid
+        primary_key: true
+
+      - name: warehouse_name
+        type: string
+
+      - name: warehouse_city
+        type: string
+        values:
+          Bhiwandi: 25
+          Hoskote: 20
+          Gurgaon: 20
+          Chakan: 20
+          Hyderabad: 15
+
+# Joins are declared Cube.js-style inside each table (see `joins:` under
+# dim_customer and fact_transaction above). A top-level `joins:` list with
+# left/right/relationship is also supported.

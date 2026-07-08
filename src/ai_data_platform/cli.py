@@ -404,5 +404,215 @@ def ui(
     uvicorn.run(create_app(project), host=host, port=port, log_level="warning")
 
 
+explore = typer.Typer(
+    name="explore",
+    help="MCP Data Explorer: register generated data in DuckDB and query it.",
+    no_args_is_help=True,
+)
+app.add_typer(explore, name="explore")
+
+
+def _print_json(payload: object) -> None:
+    console.print_json(json.dumps(payload, default=str))
+
+
+@explore.command("register")
+def explore_register(
+    dataset: str = typer.Option("default", "--dataset", "-d"),
+    data_dir: str = typer.Option(None, "--data-dir", help="Defaults to output_dir."),
+    project: str = typer.Option(".", "--project"),
+) -> None:
+    """Register generated files (parquet/csv/json) into DuckDB as views."""
+    try:
+        res = _client(project).register_datasets(dataset, data_dir)  # type: ignore[attr-defined]
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+        return
+    console.print(
+        f"Registered [bold]{len(res['registered'])}[/bold] table(s) into "
+        f"dataset [cyan]{res['dataset']}[/cyan] → {res['db_path']}"
+    )
+    for r in res["registered"]:
+        console.print(f"  • {r['table']}  ({r['format']}, {r['row_count']} rows)")
+    for s in res.get("skipped", []):
+        err_console.print(f"  [yellow]skipped[/yellow] {s}")
+
+
+@explore.command("datasets")
+def explore_datasets(project: str = typer.Option(".", "--project")) -> None:
+    """List registered datasets."""
+    try:
+        rows = _client(project).list_datasets()  # type: ignore[attr-defined]
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+        return
+    t = Table("dataset", "tables", "total rows", "db path")
+    for r in rows:
+        t.add_row(r["dataset"], str(r["table_count"]), str(r["total_rows"]), r["db_path"])
+    console.print(t)
+
+
+@explore.command("tables")
+def explore_tables(
+    dataset: str = typer.Option("default", "--dataset", "-d"),
+    project: str = typer.Option(".", "--project"),
+) -> None:
+    """List tables in a dataset."""
+    try:
+        rows = _client(project).list_explorer_tables(dataset)  # type: ignore[attr-defined]
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+        return
+    t = Table("table", "format", "rows", "cols", "partitioned")
+    for r in rows:
+        t.add_row(
+            r["table"],
+            r["format"],
+            str(r["row_count"]),
+            str(r["column_count"]),
+            "yes" if r["partitioned"] else "no",
+        )
+    console.print(t)
+
+
+@explore.command("describe")
+def explore_describe(
+    table: str,
+    dataset: str = typer.Option("default", "--dataset", "-d"),
+    project: str = typer.Option(".", "--project"),
+) -> None:
+    """Describe a registered table."""
+    try:
+        _print_json(_client(project).describe_dataset_table(table, dataset))  # type: ignore[attr-defined]
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+
+
+@explore.command("schema")
+def explore_schema(
+    table: str,
+    dataset: str = typer.Option("default", "--dataset", "-d"),
+    project: str = typer.Option(".", "--project"),
+) -> None:
+    """Show a table's schema DDL."""
+    try:
+        res = _client(project).show_table_schema(table, dataset)  # type: ignore[attr-defined]
+        console.print(res["ddl"])
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+
+
+@explore.command("preview")
+def explore_preview(
+    table: str,
+    limit: int = typer.Option(20, "--limit", "-n"),
+    dataset: str = typer.Option("default", "--dataset", "-d"),
+    project: str = typer.Option(".", "--project"),
+) -> None:
+    """Preview rows of a table."""
+    try:
+        _print_json(_client(project).preview_dataset_table(table, dataset, limit))  # type: ignore[attr-defined]
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+
+
+@explore.command("count")
+def explore_count(
+    table: str,
+    dataset: str = typer.Option("default", "--dataset", "-d"),
+    project: str = typer.Option(".", "--project"),
+) -> None:
+    """Get a table's row count."""
+    try:
+        res = _client(project).get_table_row_count(table, dataset)  # type: ignore[attr-defined]
+        console.print(f"{res['table']}: {res['row_count']} rows")
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+
+
+@explore.command("profile")
+def explore_profile(
+    table: str,
+    dataset: str = typer.Option("default", "--dataset", "-d"),
+    project: str = typer.Option(".", "--project"),
+) -> None:
+    """Per-column profile of a table."""
+    try:
+        _print_json(_client(project).profile_dataset_table(table, dataset))  # type: ignore[attr-defined]
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+
+
+@explore.command("sql")
+def explore_sql(
+    query: str,
+    dataset: str = typer.Option("default", "--dataset", "-d"),
+    max_rows: int = typer.Option(None, "--max-rows"),
+    project: str = typer.Option(".", "--project"),
+) -> None:
+    """Run a read-only SELECT against the dataset."""
+    try:
+        _print_json(_client(project).execute_explorer_sql(query, dataset, max_rows))  # type: ignore[attr-defined]
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+
+
+@explore.command("explain")
+def explore_explain(
+    query: str,
+    dataset: str = typer.Option("default", "--dataset", "-d"),
+    project: str = typer.Option(".", "--project"),
+) -> None:
+    """Show the DuckDB plan for a SELECT."""
+    try:
+        res = _client(project).explain_explorer_sql(query, dataset)  # type: ignore[attr-defined]
+        console.print(res["plan"])
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+
+
+@explore.command("suggest")
+def explore_suggest(
+    dataset: str = typer.Option("default", "--dataset", "-d"),
+    table: str = typer.Option(None, "--table", "-t"),
+    limit: int = typer.Option(8, "--limit", "-n"),
+    project: str = typer.Option(".", "--project"),
+) -> None:
+    """Suggest analytics queries for a dataset."""
+    try:
+        _print_json(_client(project).suggest_analytics_queries(dataset, table, limit))  # type: ignore[attr-defined]
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+
+
+@explore.command("insights")
+def explore_insights(
+    query: str,
+    dataset: str = typer.Option("default", "--dataset", "-d"),
+    project: str = typer.Option(".", "--project"),
+) -> None:
+    """Run a SELECT and summarize findings, anomalies, trends, and next steps."""
+    try:
+        _print_json(_client(project).generate_business_insights(query, dataset))  # type: ignore[attr-defined]
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+
+
+@explore.command("export")
+def explore_export(
+    query: str,
+    filename: str = typer.Option(..., "--filename", "-o"),
+    fmt: str = typer.Option("csv", "--format", "-f", help="csv|parquet|json"),
+    dataset: str = typer.Option("default", "--dataset", "-d"),
+    project: str = typer.Option(".", "--project"),
+) -> None:
+    """Export a SELECT result to a file inside the project export dir."""
+    try:
+        res = _client(project).export_explorer_result(query, filename, dataset, fmt)  # type: ignore[attr-defined]
+        console.print(f"Wrote {res['row_count']} rows → {res['path']}")
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+
+
 if __name__ == "__main__":
     app()

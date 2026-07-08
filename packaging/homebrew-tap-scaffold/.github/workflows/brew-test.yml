@@ -1,0 +1,39 @@
+name: Brew Smoke Test
+
+on:
+  push:
+    paths: ["Formula/**"]
+  repository_dispatch:
+    types: [formula-updated]
+  workflow_dispatch:
+
+jobs:
+  brew-smoke:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tap locally from this repo
+        run: brew tap yogi776/tap "$(pwd)" --force-local
+
+      - name: Install from source
+        run: brew install --build-from-source ai-data-platform
+
+      - name: Smoke tests
+        run: |
+          adp --help
+          adp version
+          adp mcp-server --help
+
+      - name: Init smoke test (isolated dir)
+        run: |
+          TMPDIR="$(mktemp -d)"
+          cd "$TMPDIR"
+          adp init --name smoke-test
+          test -f adp.yaml
+          echo "adp init OK"
+
+      - name: Verify uninstall
+        run: |
+          brew uninstall ai-data-platform
+          ! command -v adp

@@ -31,7 +31,7 @@ There is no `if domain == "healthcare"` in the codebase. Retail orders, patient 
 | Domain | What you build faster | Validated example |
 |---|---|---|
 | **Retail / E-commerce** | Sales dashboards, fraud models, recommendation engines | [retail-ecommerce](examples/retail-ecommerce/) — 4 tables, 100/100 |
-| **Healthcare** | Patient analytics, admission workflows, compliance testing | [healthcare](examples/healthcare/) — 5 tables, 159 columns, 100/100 |
+| **Healthcare** | Patient analytics, admission workflows, compliance testing | [healthcare-claims](https://github.com/Yogi776/data-generation-sdk/tree/main/healthcare-claims) — 5+ tables, temporal/hierarchy |
 | **Finance / Banking** | Risk scoring, transaction monitoring, regulatory reporting | FK-safe account → transaction chains |
 | **SaaS / CRM** | Customer 360, churn models, sales pipelines | [customer-transaction](examples/customer-transaction/) — 98 columns, 100/100 |
 | **Manufacturing / IoT** | Supply chain dashboards, work-order tracking | Parent-child BOM relationships |
@@ -163,7 +163,7 @@ You have a design doc or schema in mind. No sample files required.
 ```bash
 mkdir demo && cd demo
 adp init --name demo
-adp apply-spec path/to/spec.yaml       # see examples/healthcare, examples/customer-transaction
+adp apply-spec path/to/spec.yaml       # see examples/customer-transaction, healthcare-claims (GitHub)
 adp generate-data --rows 50000 --output parquet
 adp quality-check --report quality.md
 ```
@@ -244,11 +244,9 @@ print(client.quality_check()["quality_score"])   # → 100.0
 
 | Example | Path | Tables | Best for |
 |---|---|---|---|
-| [shop](examples/shop/) | B — CSV | 2 | Fastest 2-minute demo |
-| [product-transactions](examples/product-transactions/) | A — spec | 3 | Minimal spec-only starter |
 | [customer-transaction](examples/customer-transaction/) | A or B | 2 (+ KYC) | Full 98-column e-commerce model |
-| [healthcare](examples/healthcare/) | A — spec | 5 | Temporal rules, hierarchies |
 | [retail-ecommerce](examples/retail-ecommerce/) | B — CSV | 4 | Retail star schema, 32/32 checks |
+| [healthcare-claims](https://github.com/Yogi776/data-generation-sdk/tree/main/healthcare-claims) | A — spec | 5+ | Temporal rules, hierarchies |
 
 ---
 
@@ -301,7 +299,7 @@ tables:
 | [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) | Runnable E2E walkthrough — Paths A, B, C, D with expected outputs |
 | [docs/USE-CASES.md](docs/USE-CASES.md) | All 16 use cases — goal, commands, example, expected outcome |
 | [docs/SPEC-REFERENCE.md](docs/SPEC-REFERENCE.md) | Complete `spec.yaml` language reference |
-| [docs/MCP-GUIDE.md](docs/MCP-GUIDE.md) | All 26 MCP tools, agent flows, IDE setup |
+| [docs/MCP-GUIDE.md](docs/MCP-GUIDE.md) | All 25 MCP tools, agent flows, IDE setup |
 | [docs/AGENT-FLOW.md](docs/AGENT-FLOW.md) | Guided agent workflows (intake → KPI validation) |
 | [docs/USER-FLOW.md](docs/USER-FLOW.md) | Step-by-step internals for each CLI stage |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Design principles, pipeline detail, extension points |

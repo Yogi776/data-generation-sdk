@@ -71,9 +71,11 @@ all = [
 adp = "ai_data_platform.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/yogeshkhangode/ai-data-platform"
-Documentation = "https://github.com/yogeshkhangode/ai-data-platform#readme"
-Issues = "https://github.com/yogeshkhangode/ai-data-platform/issues"
+Homepage = "https://github.com/Yogi776/data-generation-sdk"
+Documentation = "https://github.com/Yogi776/data-generation-sdk#readme"
+Issues = "https://github.com/Yogi776/data-generation-sdk/issues"
+Repository = "https://github.com/Yogi776/data-generation-sdk"
+Source = "https://github.com/Yogi776/data-generation-sdk"
 
 [tool.hatch.version]
 path = "src/ai_data_platform/__about__.py"

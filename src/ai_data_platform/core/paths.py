@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ai_data_platform.core.exceptions import UnsafePathError
+from ai_data_platform.config import CONFIG_FILENAME
+from ai_data_platform.core.exceptions import ProjectNotInitializedError, UnsafePathError
 
 ADP_DIR = ".adp"
 CATALOG_DB = "catalog.db"
@@ -12,6 +13,30 @@ CATALOG_DB = "catalog.db"
 
 def project_root(path: str | Path = ".") -> Path:
     return Path(path).expanduser().resolve()
+
+
+def discover_project_root(start: str | Path | None = None) -> Path:
+    """Walk up from *start* (default: cwd) until ``adp.yaml`` is found.
+
+    Lets ``adp mcp-server`` work without a hardcoded ``--project`` path: Cursor
+    (and other MCP hosts) only need to set the process cwd to the workspace.
+    """
+    current = Path(start or Path.cwd()).expanduser().resolve()
+    for directory in (current, *current.parents):
+        if (directory / CONFIG_FILENAME).is_file():
+            return directory
+    raise ProjectNotInitializedError(str(current))
+
+
+def resolve_project_path(path: str | Path = ".") -> Path:
+    """Resolve CLI/MCP ``--project``: explicit path, or auto-discover from cwd."""
+    candidate = Path(path).expanduser()
+    if str(path) in (".", ""):
+        return discover_project_root()
+    resolved = candidate.resolve()
+    if (resolved / CONFIG_FILENAME).is_file():
+        return resolved
+    raise ProjectNotInitializedError(str(resolved))
 
 
 def adp_dir(root: str | Path = ".") -> Path:

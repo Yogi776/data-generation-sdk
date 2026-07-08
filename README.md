@@ -47,6 +47,31 @@ Sources  SQLite    Stats   Writers  Checks   LLM Provider
 - **Deterministic** — same catalog + seed = byte-identical output
 - **Safe by design** — SELECT-only SQL guard, PII never sent to LLMs
 
+## Dashboard: Sales & Revenue Analytics
+
+The retail dashboard (Sales & Revenue Analytics) is computed end-to-end from the generated fact tables using catalog-aware SQL. Conceptually:
+
+```
++---------------------+      +------------------+
+| retail fact tables | ---> | DuckDB / SQL     |
++----------+----------+      +---------+--------+
+           |                               |
+           v                               v
+  +-------------------+          +-------------------+
+  | KPI calculations  |          | Segments / Mix   |
+  +---------+---------+          +---------+---------+
+            |                             |
+            v                             v
+            +-----------------------------+
+                          |
+                          v
+              +------------------------------+
+              | Sales & Revenue Dashboard UI |
+              +------------------------------+
+```
+
+Key KPI blocks typically include: Orders, Total Revenue, AOV, Delivery/Return/Cancel rates, Discount & Coupon impact, and QoQ revenue trend.
+
 ---
 
 ## How It Works
@@ -180,23 +205,25 @@ tables:
 pip install 'ai-data-platform[mcp]'
 ```
 
-Add to your IDE MCP config:
+Add a **project-level** `.cursor/mcp.json` next to your `adp.yaml` (no hardcoded paths — the server auto-discovers the project from the workspace cwd):
 
 ```json
 {
   "mcpServers": {
     "adp": {
       "command": "adp",
-      "args": ["mcp-server", "--project", "/path/to/your/project"]
+      "args": ["mcp-server"]
     }
   }
 }
 ```
 
-Claude Code CLI:
+Open the folder that contains `adp.yaml` as your Cursor workspace (e.g. `retail/`), then reload MCP. Optional override: `--project ./subdir`.
+
+Claude Code CLI (from your project directory):
 
 ```bash
-claude mcp add adp -- adp mcp-server --project /path/to/your/project
+claude mcp add adp -- adp mcp-server
 ```
 
 ### MCP Tools

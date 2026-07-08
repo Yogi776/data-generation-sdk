@@ -371,15 +371,25 @@ def tables(
 
 @app.command("mcp-server")
 def mcp_server(
-    project: str = typer.Option(".", "--project", help="Project directory."),
+    project: str = typer.Option(
+        ".",
+        "--project",
+        help="Project directory (default: auto-discover adp.yaml from cwd upward).",
+    ),
 ) -> None:
     """Start the MCP server (stdio) for Claude, Cursor, Windsurf, VS Code."""
     try:
+        from ai_data_platform.core.paths import resolve_project_path
         from ai_data_platform.mcp.server import run_server
     except ImportError:
         _fail(Exception("MCP support requires the mcp extra: pip install 'ai-data-platform[mcp]'"))
         return
-    run_server(project)
+    try:
+        root = resolve_project_path(project)
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+        return
+    run_server(str(root))
 
 
 @app.command()

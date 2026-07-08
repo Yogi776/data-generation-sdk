@@ -52,18 +52,12 @@ def _safe(fn: Callable[..., str]) -> Callable[..., str]:
 
 
 def create_server(project_path: str = ".") -> FastMCP:
+    from ai_data_platform.agent.workflow import mcp_server_instructions
+
     client = ADPClient(project_path)
     mcp = FastMCP(
         "ai-data-platform",
-        instructions=(
-            "Local AI data platform. Two entry paths: "
-            "(A) no data: apply_spec with a dataset spec YAML, then "
-            "generate_synthetic_data; "
-            "(B) sample data configured in adp.yaml: scan_sources -> profile_source "
-            "-> generate_synthetic_data. "
-            "Always finish with run_quality_check; inspect rows with preview_data. "
-            "Generation is deterministic per seed."
-        ),
+        instructions=mcp_server_instructions(),
     )
 
     # -- design-time -----------------------------------------------------------
@@ -351,46 +345,38 @@ def create_server(project_path: str = ".") -> FastMCP:
         return json.dumps(client.catalog.get_relationships(), default=str)
 
     # -- prompts ---------------------------------------------------------------
+    from ai_data_platform.agent.workflow import (
+        agent_orchestrator_prompt,
+        calibrate_dataset_prompt,
+        intake_wizard_prompt,
+        new_dataset_wizard_prompt,
+        research_and_generate_prompt,
+    )
+
+    @mcp.prompt()
+    def agent_orchestrator() -> str:
+        """Route to flow A/B/C/D/E before calling tools — read this first."""
+        return agent_orchestrator_prompt()
+
+    @mcp.prompt()
+    def intake_wizard(domain: str = "your domain") -> str:
+        """Structured Phase 0–1 questions before any MCP tools."""
+        return intake_wizard_prompt(domain)
+
     @mcp.prompt()
     def research_and_generate(domain: str = "your domain") -> str:
-        """Research real-world distributions on the web, then generate
-        production-grade data grounded in the findings."""
-        return (
-            f"Create a production-realistic synthetic {domain} dataset using this "
-            "research-driven workflow:\n"
-            f"1. RESEARCH (use your web search): find real-world facts about {domain} — "
-            "the standard entities and their relationships; actual category "
-            "distributions with percentages (market shares, status mixes, "
-            "demographic splits); realistic numeric ranges (prices, quantities, "
-            "durations); common ID/code formats. Cite each source.\n"
-            "2. REASON: summarize the findings as research notes — every "
-            "distribution you'll encode, with its source.\n"
-            "3. DRAFT: call propose_spec with the description AND your research "
-            "notes (or write the spec YAML yourself). Review the returned YAML: "
-            "check weights match your research, add joins with correct "
-            "cardinalities and dependencies (after/expr/null_unless/values_by).\n"
-            "4. GENERATE: apply_spec, then generate_synthetic_data (ask me for "
-            "row count and seed).\n"
-            "5. VALIDATE: run_quality_check and preview_data; verify the generated "
-            "distributions against your researched numbers and report the "
-            "comparison with citations."
-        )
+        """Research real-world distributions, then generate production-grade data."""
+        return research_and_generate_prompt(domain)
+
+    @mcp.prompt()
+    def calibrate_dataset() -> str:
+        """Post-generation KPI compare and spec weight patch loop."""
+        return calibrate_dataset_prompt()
 
     @mcp.prompt()
     def new_dataset_wizard(domain: str = "your domain") -> str:
         """Guided flow: design a spec, generate, validate — no seed data needed."""
-        return (
-            f"Help me create a synthetic {domain} dataset with this workflow:\n"
-            "1. Ask me for the tables and key columns I need (or propose typical "
-            f"ones for {domain}).\n"
-            "2. Draft a dataset spec YAML: types, PKs, weighted `values`, "
-            "`format` templates for IDs, joins with cardinalities, and "
-            "dependencies (`after` for temporal order, `expr` for arithmetic, "
-            "`null_unless` for conditionals, `values_by` for hierarchies).\n"
-            "3. Call apply_spec with the YAML, then generate_synthetic_data "
-            "(ask me for row count).\n"
-            "4. Call run_quality_check and preview_data, and summarize the results."
-        )
+        return new_dataset_wizard_prompt(domain)
 
     return mcp
 

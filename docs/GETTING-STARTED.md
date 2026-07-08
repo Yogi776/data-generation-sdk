@@ -15,7 +15,7 @@ pip install 'ai-data-platform[all]'
 
 # Verify
 adp version
-# → ai-data-platform 0.2.1
+# → ai-data-platform 0.3.0
 ```
 
 If `adp: command not found`, activate your virtual environment first:

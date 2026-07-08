@@ -1,15 +1,17 @@
 # Local Setup — step by step (macOS)
 
+> **Primary guide:** [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) — runnable E2E walkthrough for all paths.
+
 ## 1. Install (one time)
 
 ```bash
-cd ~/experiment-personal/"Data Generator"/ai-data-platform
+cd path/to/ai-data-platform
 
 python3 -m venv .venv               # needs Python 3.11+ (check: python3 --version)
 source .venv/bin/activate
 pip install -e ".[dev,all]"
 
-adp version                          # → ai-data-platform 0.1.0
+adp version                          # → ai-data-platform 0.2.1
 ```
 
 Every new terminal session: `source .venv/bin/activate` first (or add the venv's
@@ -22,7 +24,7 @@ mkdir ~/my-dataset && cd ~/my-dataset
 adp init
 
 # copy a ready spec to start from:
-cp ~/experiment-personal/"Data Generator"/ai-data-platform/examples/healthcare/spec.yaml .
+cp path/to/ai-data-platform/examples/healthcare/spec.yaml .
 #   (or examples/customer-transaction/spec.yaml for the 98-column e-commerce model)
 
 adp apply-spec spec.yaml
@@ -32,6 +34,8 @@ adp quality-check --report quality.md
 
 Output lands in `~/my-dataset/output/`. Edit spec.yaml (tables, values weights,
 joins, expr/after/null_unless/values_by dependencies) and regenerate.
+
+See [docs/SPEC-REFERENCE.md](docs/SPEC-REFERENCE.md) for the full spec language.
 
 ## 3. Alternative path — learn from your real sample data
 
@@ -59,30 +63,35 @@ adp semantic-model --format cube --out model/cubes.yml    # Cube.js models
 adp docs                                                  # data dictionary
 adp ui                                                    # web console → http://127.0.0.1:8765
 adp sql "revenue by city last month"                      # needs MINIMAX_API_KEY in .env
+adp explore datasets                                      # list registered DuckDB datasets
+adp explore sql "SELECT count(*) FROM orders"             # query generated data
 ```
 
 ## 5. MCP — drive it from Claude / Cursor
 
 ```bash
-# Claude Code:
-claude mcp add adp -- ~/experiment-personal/"Data Generator"/ai-data-platform/.venv/bin/adp \
-  mcp-server --project ~/my-dataset
+# Claude Code (from your project directory):
+claude mcp add adp -- adp mcp-server
 ```
 
-Claude Desktop / Cursor / Windsurf — add to their mcp config json:
+Cursor / Windsurf / VS Code — create `.cursor/mcp.json` **next to your `adp.yaml`**:
 
 ```json
 {
   "mcpServers": {
     "adp": {
-      "command": "/Users/yogeshkhangode/experiment-personal/Data Generator/ai-data-platform/.venv/bin/adp",
-      "args": ["mcp-server", "--project", "/Users/yogeshkhangode/my-dataset"]
+      "command": "adp",
+      "args": ["mcp-server"]
     }
   }
 }
 ```
 
+Open the folder containing `adp.yaml` as your workspace, then reload MCP.
+
 Then just ask the agent: "generate 10k rows of test data and run a quality check."
+
+See [docs/MCP-GUIDE.md](docs/MCP-GUIDE.md) for all 26 MCP tools and 4 recommended agent flows.
 
 ### Testing in Cursor, step by step
 
@@ -90,26 +99,14 @@ Then just ask the agent: "generate 10k rows of test data and run a quality check
 
    ```bash
    mkdir ~/adp-cursor-test && cd ~/adp-cursor-test
-   source ~/experiment-personal/"Data Generator"/ai-data-platform/.venv/bin/activate
+   source path/to/ai-data-platform/.venv/bin/activate
    adp init
    ```
 
-2. Add the server to Cursor — create/edit `~/.cursor/mcp.json`
-   (or Cursor Settings → MCP → Add new global MCP server):
-
-   ```json
-   {
-     "mcpServers": {
-       "adp": {
-         "command": "/Users/yogeshkhangode/experiment-personal/Data Generator/ai-data-platform/.venv/bin/adp",
-         "args": ["mcp-server", "--project", "/Users/yogeshkhangode/adp-cursor-test"]
-       }
-     }
-   }
-   ```
+2. Add `.cursor/mcp.json` next to `adp.yaml` (see JSON above).
 
 3. Restart Cursor → Settings → MCP: "adp" should show a green dot and
-   11 tools (apply_spec, generate_synthetic_data, preview_data, …).
+   26 tools (apply_spec, generate_synthetic_data, preview_data, execute_sql, …).
 
 4. In Cursor chat (Agent mode), test config-only generation with a prompt like:
 
@@ -124,14 +121,14 @@ Then just ask the agent: "generate 10k rows of test data and run a quality check
 
 5. Files land in `~/adp-cursor-test/output/` — open them right in Cursor.
 
-If tools don't appear: check the `command` path exists (`ls` it), use absolute
-paths only, and view Cursor's MCP logs (Output panel → "MCP") for stderr.
+If tools don't appear: check `adp` is on PATH (`which adp`), use absolute
+paths in the MCP config if needed, and view Cursor's MCP logs (Output panel → "MCP") for stderr.
 
 ## 6. Verify the install (optional)
 
 ```bash
-cd ~/experiment-personal/"Data Generator"/ai-data-platform
-pytest          # 70 tests
+cd path/to/ai-data-platform
+pytest          # run tests
 ruff check .
 ```
 
@@ -145,4 +142,4 @@ ruff check .
 - `command not found: adp` → activate the venv (`source .venv/bin/activate`).
 - `disk I/O error` on network drives → `export ADP_CATALOG_DIR=~/.adp-catalogs`.
 - Python < 3.11 → `brew install python@3.12`, then create the venv with `python3.12 -m venv .venv`.
-- Full docs: README.md · docs/USER-FLOW.md · docs/ARCHITECTURE.md · examples/*/INSTRUCTIONS.md
+- Full docs: [README.md](README.md) · [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) · [docs/USE-CASES.md](docs/USE-CASES.md) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)

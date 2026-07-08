@@ -1,5 +1,8 @@
 # New User Flow — step by step, with internals
 
+> **For a runnable tutorial with copy-paste commands and expected output at every step, see [GETTING-STARTED.md](GETTING-STARTED.md).**
+> This document explains what the engine does internally at each step.
+
 What a brand-new user does, and what the engine does underneath at every step.
 
 ## 1. Install — `pip install ai-data-platform`

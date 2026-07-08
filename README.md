@@ -1,356 +1,311 @@
 # ai-data-platform
 
-**Local-first AI data platform for synthetic data generation.**
+## Why it matters
 
-Connect sources, build a metadata catalog, profile your data, generate realistic FK-safe synthetic data, build semantic models, and query in natural language — all driven by MCP for Claude, Cursor, Windsurf, and VS Code.
+Data is the prerequisite for every analytics dashboard, ML model, pipeline test, and stakeholder demo — yet most teams spend weeks waiting for it. Production exports require compliance approval. Hand-crafted test files miss relationships and break at scale. POCs stall while access is negotiated.
 
-```
-pip install ai-data-platform
-```
+**ai-data-platform** is a local-first tool that turns a schema declaration or a small sample into FK-safe, realistic synthetic data in minutes — with automated quality scoring, semantic models, SQL analytics, and AI-driven workflows. No cloud account. No PII exposure. Works in retail, healthcare, finance, and any other domain without custom code.
 
-**Requires Python 3.11+**
+| Without ADP | With ADP |
+|---|---|
+| Wait 2–6 weeks for production data access | Generate 50k rows in under a minute |
+| Hand-write fake CSVs that break FK integrity | FK-safe, zero-orphan data at any volume |
+| Rebuild test data after every schema change | Re-run `apply-spec` or `scan` → regenerate |
+| Demo dashboards on empty tables | Realistic distributions from day one |
+| Share production exports (PII risk) | Synthetic data — no real PII leaves your machine |
 
----
+### Acceleration timeline
 
-## Architecture
-
-The system has four interfaces (CLI, REST API, Web UI, MCP) that all call the same `ADPClient` backend. The backend coordinates six core modules:
-
-- **Connectors** — CSV, Parquet, DuckDB, PostgreSQL, MySQL
-- **Metadata** — catalog stored in SQLite via SQLAlchemy
-- **Profiler** — statistics, PII detection, PK/FK inference
-- **Generator** — Plan IR compilation with FK-safe, seeded PRNG
-- **Quality** — auto-derived rules with weighted score
-- **Semantic Builder** — generates Cube.js YAML models
-
-```
-USER (CLI / API / UI / MCP / SDK)
-         |
-         v
-   +------------+
-   | ADPClient  |  <-- one backend, every interface
-   +------+-----+
-         |
-  +------+------+------+------+------+------+
-  |      |      |      |      |      |      |
-  v      v      v      v      v      v      v
-Connector Metadata Profiler Generator Quality Semantic SQL
-Registry  Catalog                       Builder  Assistant
-  v        v         v       v        v         v
-Sources  SQLite    Stats   Writers  Checks   LLM Provider
-```
-
-**Design principles:**
-- **One backend, many faces** — CLI, API, UI, and MCP all call the same `ADPClient`
-- **Metadata-driven** — samplers, checks, and models derive from your catalog
-- **Plan IR** — generation compiles to a versioned JSON plan
-- **Deterministic** — same catalog + seed = byte-identical output
-- **Safe by design** — SELECT-only SQL guard, PII never sent to LLMs
-
-## Dashboard: Sales & Revenue Analytics
-
-The retail dashboard (Sales & Revenue Analytics) is computed end-to-end from the generated fact tables using catalog-aware SQL. Conceptually:
-
-```
-+---------------------+      +------------------+
-| retail fact tables | ---> | DuckDB / SQL     |
-+----------+----------+      +---------+--------+
-           |                               |
-           v                               v
-  +-------------------+          +-------------------+
-  | KPI calculations  |          | Segments / Mix   |
-  +---------+---------+          +---------+---------+
-            |                             |
-            v                             v
-            +-----------------------------+
-                          |
-                          v
-              +------------------------------+
-              | Sales & Revenue Dashboard UI |
-              +------------------------------+
-```
-
-Key KPI blocks typically include: Orders, Total Revenue, AOV, Delivery/Return/Cancel rates, Discount & Coupon impact, and QoQ revenue trend.
-
----
-
-## How It Works
-
-**Two entry paths:**
-
-**Path A: Config-Only (no source data needed)**
-
-```
-spec.yaml  ->  adp apply-spec  ->  adp generate-data  ->  output/
-```
-
-**Path B: Learn from your data**
-
-```
-adp connect  ->  adp scan  ->  adp profile  ->  adp generate-data  ->  output/
-                                                        |
-                                        adp quality-check  ----+
-```
-
-**The generation pipeline:**
-
-```
-scan         profile       generate-data
-schemas  ->  stats, PII  ->  Plan IR compiled
-FKs          PK/FK        seeded PRNG runs
-                               |
-              +----------------+----------------+
-              |                |                |
-              v                v                v
-         CSV/Parquet      DuckDB/SQL        quality-check
-         output           output                |
-                                            score + report
-```
-
-**Agent integration (MCP):**
-
-```
-Claude / Cursor / Windsurf
-    |
-    |  11 tools: scan, profile, generate_synthetic_data,
-    |            run_quality_check, preview_data, sql, ...
-    v
-adp mcp-server  ->  ADPClient  ->  output/
-```
-
----
-
-## Installation
-
-```bash
-pip install ai-data-platform              # core only
-pip install 'ai-data-platform[postgres]'  # PostgreSQL
-pip install 'ai-data-platform[mysql]'     # MySQL
-pip install 'ai-data-platform[mcp]'       # MCP server
-pip install 'ai-data-platform[all]'        # all extras
-```
-
-| Extra | Included in | Purpose |
+| Phase | Traditional | With ai-data-platform |
 |---|---|---|
-| `[postgres]` | `[all]` | PostgreSQL via psycopg |
-| `[mysql]` | `[all]` | MySQL via pymysql |
-| `[mcp]` | `[all]` | MCP for AI IDE integrations |
-| `[dev]` | - | Testing, linting, type checking |
+| Get representative data | 2–6 weeks | 5–10 minutes |
+| Validate data quality | Manual spot-checks | Automated score + report |
+| Build semantic layer | Weeks of hand-written YAML | Auto-detected facts/dims/measures |
+| Demo to stakeholders | Empty charts or risky prod samples | Realistic KPIs on synthetic data |
+| Onboard a new team member | "Ask someone for the test dump" | `adp init && adp apply-spec && adp generate-data` |
+
+### Works in any domain — zero customization
+
+There is no `if domain == "healthcare"` in the codebase. Retail orders, patient admissions, bank transactions, factory work orders, and telecom CDRs are all just tables, keys, categories, amounts, and dates.
+
+| Domain | What you build faster | Validated example |
+|---|---|---|
+| **Retail / E-commerce** | Sales dashboards, fraud models, recommendation engines | [retail-ecommerce](examples/retail-ecommerce/) — 4 tables, 100/100 |
+| **Healthcare** | Patient analytics, admission workflows, compliance testing | [healthcare](examples/healthcare/) — 5 tables, 159 columns, 100/100 |
+| **Finance / Banking** | Risk scoring, transaction monitoring, regulatory reporting | FK-safe account → transaction chains |
+| **SaaS / CRM** | Customer 360, churn models, sales pipelines | [customer-transaction](examples/customer-transaction/) — 98 columns, 100/100 |
+| **Manufacturing / IoT** | Supply chain dashboards, work-order tracking | Parent-child BOM relationships |
+| **Any new vertical** | POC before production access is granted | Cold-start from `spec.yaml` — no sample data needed |
 
 ---
 
-## Quickstart
+## End-to-end — what you get
+
+One project, one flow, five tangible deliverables:
+
+```
+  YOUR INPUT                    ADP PIPELINE                      YOUR OUTPUT
+  ──────────                    ────────────                      ───────────
+
+  spec.yaml          ──▶  apply-spec  ──▶  catalog + profiles
+  or CSV/DB sample   ──▶  scan/profile ──▶  learned distributions
+                              │
+                              ▼
+                         generate-data
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+         output/         quality.md      semantic model
+    (parquet/csv/      (score +          (Cube.js YAML
+     duckdb files)      evidence)         for BI tools)
+              │
+              ▼
+         explore / ui / sql
+    (query, dashboard KPIs,
+     natural-language analytics)
+```
+
+| Deliverable | What it is | Who uses it |
+|---|---|---|
+| **`output/`** | FK-safe synthetic tables (Parquet, CSV, DuckDB, or SQL) | Engineers, QA, ML pipelines |
+| **`quality.md`** | Weighted score (0–100) with per-check pass/fail evidence | QA, data engineers, compliance |
+| **Semantic model** | Auto-detected facts, dimensions, measures → Cube.js YAML | BI developers, analytics teams |
+| **Data dictionary** | Markdown documentation of every table and column | Onboarding, documentation, audits |
+| **SQL analytics** | Query generated data in DuckDB; NL-to-SQL for business questions | Analysts, product managers, demos |
+
+**A complete example:** A product manager describes a retail dataset → agent applies a spec → 50k rows generated → quality score 100/100 → revenue-by-city query returns realistic KPIs → stakeholder demo ready in one session. No production data touched.
+
+Full walkthrough: [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md)
+
+---
+
+## Who it's for
+
+| Persona | Your problem | What you do | What you get (in minutes) |
+|---|---|---|---|
+| **Data engineer** | Weeks waiting for masked prod exports | `connect` → `scan` → `profile` → `generate-data` | FK-safe test data at any volume, CI-reproducible with `--seed 42` |
+| **Product / solution architect** | Can't demo until prod access is approved | `apply-spec spec.yaml` → `generate-data` | Working dataset from a design doc — no sample files needed |
+| **Analytics / BI developer** | Dashboards built on empty or fake data | `generate-data` → `semantic-model` → `explore sql` | Realistic data + Cube.js layer + queryable KPIs |
+| **QA / test engineer** | Hand-crafted CSVs break FK integrity | `generate-data` → `quality-check` | Scored report with 0 orphans guaranteed |
+| **ML engineer** | Not enough labeled data to train or evaluate | `profile` (learn shapes) → `generate-data --rows 1000000` | 1M rows preserving statistical distributions |
+| **AI agent user** | Agent has nothing to work with in the IDE | MCP: "generate 10k rows and run quality check" | Full pipeline driven by natural language in Cursor/Claude |
+| **Consultant / SI** | Every client engagement starts from zero | Same tool, swap `spec.yaml` per domain | Retail Monday, healthcare Tuesday — no custom code |
+
+**Not sure where to start?**
+
+| If you are… | Start here | Time |
+|---|---|---|
+| Non-technical / business user | Ask your AI agent (Path C) or read [USE-CASES.md](docs/USE-CASES.md) | 3 min |
+| Have a schema but no data | [Path A](#path-a--no-data-needed-5-min) — `apply-spec` | 5 min |
+| Have CSV or database samples | [Path B](#path-b--learn-from-sample-data-10-min) — `connect` → `scan` | 10 min |
+| Want the full tutorial | [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) | 15 min |
+
+---
+
+## How it works
+
+Three ways in. Same pipeline. Same validated output.
+
+```mermaid
+flowchart TD
+  subgraph paths [Choose your path]
+    Q1{Have sample data?}
+    Q1 -->|No| PathA["Path A: spec.yaml\napply-spec → generate"]
+    Q1 -->|Yes| PathB["Path B: learn from data\nconnect → scan → profile → generate"]
+    Q1 -->|AI IDE| PathC["Path C: MCP\nCursor / Claude / Windsurf"]
+  end
+
+  PathA --> Pipeline
+  PathB --> Pipeline
+  PathC --> Pipeline
+
+  subgraph Pipeline [Generation pipeline]
+    Gen[FK-safe generator]
+    QC[quality-check]
+    Gen --> QC
+  end
+
+  QC --> Out[output/ files]
+
+  Out --> Next[semantic-model · explore sql · ui · docs]
+```
+
+**Five steps, plain language:**
+
+| Step | What happens | You see |
+|---|---|---|
+| 1. **Define** | Declare your schema (`spec.yaml`) or connect your sample data | Tables, columns, and relationships in the catalog |
+| 2. **Learn** | Engine profiles distributions, detects keys, flags PII | Statistics per column — means, categories, null ratios |
+| 3. **Generate** | FK-safe synthetic data at any volume, seeded for reproducibility | Files in `output/` — one per table |
+| 4. **Validate** | Auto-derived quality checks run against your metadata | Score out of 100 with per-check evidence |
+| 5. **Use** | Query with SQL, build semantic models, browse in UI, or drive from AI | KPIs, dashboards, data dictionaries, insights |
+
+Full internals: [docs/USER-FLOW.md](docs/USER-FLOW.md) · Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
+---
+
+## Get started
+
+### Install
 
 ```bash
-# 1. Initialize a project
+pip install 'ai-data-platform[all]'      # everything (recommended)
+pip install 'ai-data-platform[mcp]'       # MCP only (add to existing install)
+pip install 'ai-data-platform[postgres]'  # PostgreSQL connector
+```
+
+Requires Python 3.11+.
+
+### Path A — no data needed (~5 min)
+
+You have a design doc or schema in mind. No sample files required.
+
+```bash
 mkdir demo && cd demo
-adp init --name my-project
-
-# 2. Connect your data source
-adp connect --name my-db --type csv --path ./data
-
-# 3. Build the catalog
-adp scan
-
-# 4. Profile for statistics
-adp profile
-
-# 5. Generate synthetic data
+adp init --name demo
+adp apply-spec path/to/spec.yaml       # see examples/healthcare, examples/customer-transaction
 adp generate-data --rows 50000 --output parquet
-
-# 6. Validate quality
-adp quality-check --report quality-report.md
+adp quality-check --report quality.md
 ```
 
-**No data at all?**
+**You get:** `output/*.parquet` + `quality.md` with score 100/100.
+
+### Path B — learn from sample data (~10 min)
+
+You have CSV, Parquet, DuckDB, PostgreSQL, or MySQL samples.
 
 ```bash
-adp init --name my-project
-adp apply-spec examples/customer-transaction/spec.yaml
-adp generate-data --rows 50000
+mkdir demo && cd demo
+adp init --name demo
+adp connect --name my-db --type csv --path ./data
+adp scan && adp profile
+adp generate-data --rows 50000 --output parquet
+adp quality-check
 ```
 
----
+**You get:** Data that mirrors your sample's distributions, scaled to 50k rows.
 
-## Generate without writing code
-
-`adp apply-spec spec.yaml` generates data from a YAML declaration:
-
-```yaml
-version: 1
-tables:
-  - name: dim_customer
-    columns:
-      - name: customer_id
-        type: uuid
-        primary_key: true
-      - name: gender
-        type: string
-        values: {Male: 48, Female: 50, Other: 2}
-      - name: age
-        type: int
-        min: 18
-        max: 85
-      - name: signup_date
-        type: date
-        start: 2020-01-01
-        end: 2026-01-01
-```
-
----
-
-## MCP Setup (Cursor, Claude, Windsurf, VS Code)
+### Path C — drive from Cursor / Claude (~3 min)
 
 ```bash
 pip install 'ai-data-platform[mcp]'
+cd my-project && adp init && adp setup-agent
 ```
 
-Add a **project-level** `.cursor/mcp.json` next to your `adp.yaml` (no hardcoded paths — the server auto-discovers the project from the workspace cwd):
+MCP works with any client (Claude, Cursor, Windsurf, VS Code). Cursor users also get auto-installed agent skills via `adp init`.
+
+Add `.cursor/mcp.json` next to your `adp.yaml` (or use `adp init` to auto-write):
 
 ```json
-{
-  "mcpServers": {
-    "adp": {
-      "command": "adp",
-      "args": ["mcp-server"]
-    }
-  }
-}
+{"mcpServers": {"adp": {"command": "adp", "args": ["mcp-server"]}}}
 ```
 
-Open the folder that contains `adp.yaml` as your Cursor workspace (e.g. `retail/`), then reload MCP. Optional override: `--project ./subdir`.
+Open the project folder as your workspace, reload MCP, then ask:
 
-Claude Code CLI (from your project directory):
+> "Apply the healthcare spec and generate 10k rows. Run a quality check and show me the first 10 rows."
 
-```bash
-claude mcp add adp -- adp mcp-server
-```
+**You get:** Agent reports quality score, shows sample rows, files land in `output/`.
 
-### MCP Tools
+**Runnable walkthrough with expected output at every step:** [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md)
 
-| Tool | Description |
-|---|---|
-| `scan_sources` | Discover schemas and relationships |
-| `profile_source` | Profile tables (stats, PII, PK/FK) |
-| `generate_synthetic_data` | Generate FK-safe synthetic data |
-| `run_quality_check` | Score and validate generated data |
-| `search_metadata` | Search catalog for tables/columns |
-| `get_table_schema` | Get table column details |
-| `generate_sql` | NL to read-only SQL |
-| `create_semantic_model` | Build Cube.js semantic model |
-| `generate_docs` | Markdown data dictionary |
+**All 16 use cases:** [docs/USE-CASES.md](docs/USE-CASES.md)
 
 ---
 
-## Python SDK
+## Key capabilities
+
+| Capability | CLI | MCP tool | What it does |
+|---|---|---|---|
+| Declarative generation | `adp apply-spec` | `apply_spec` | Generate from `spec.yaml` — no sample data |
+| Learn from samples | `adp scan` + `adp profile` | `scan_sources` + `profile_source` | Discover schema and distributions |
+| FK-safe generation | `adp generate-data` | `generate_synthetic_data` | Seeded, deterministic, zero orphans |
+| Quality validation | `adp quality-check` | `run_quality_check` | Weighted score with per-check evidence |
+| SQL analytics | `adp explore sql` | `execute_sql` | Query generated data in DuckDB |
+| Semantic models | `adp semantic-model` | `create_semantic_model` | Auto-detect facts, dims, measures → Cube.js YAML |
+| Natural language SQL | `adp sql` | `generate_sql` | NL → read-only SELECT (PII-safe) |
+| Data dictionary | `adp docs` | `generate_docs` | Markdown catalog documentation |
+| Web console | `adp ui` | — | Browse at http://127.0.0.1:8765 |
+| AI spec drafting | — | `propose_spec` | LLM drafts `spec.yaml` from plain language |
+
+One backend (`ADPClient`), four interfaces: **CLI · SDK · Web UI · MCP**. Same logic everywhere.
 
 ```python
 from ai_data_platform import ADPClient
 
-client = ADPClient(project_path=".")
-client.scan()
-client.profile()
-
+client = ADPClient(".")
+client.apply_spec("spec.yaml")
 result = client.generate_data(rows=50_000, output_format="parquet")
-print(result)
-
-report = client.quality_check()
-print(report["quality_score"])
-
-model = client.create_semantic_model(fmt="cube")
-print(model["rendered"])
+print(client.quality_check()["quality_score"])   # → 100.0
 ```
 
 ---
 
-## Command Reference
+## Examples
 
-| Command | What it does |
-|---|---|
-| `adp init` | Create adp.yaml and .adp/ catalog |
-| `adp connect` | Add a data source |
-| `adp scan` | Discover tables, columns, FK candidates |
-| `adp profile` | Compute stats, detect PII, confirm PKs/FKs |
-| `adp apply-spec` | Register a declarative YAML spec |
-| `adp generate-data` | Generate synthetic data |
-| `adp quality-check` | Run checks and print quality score |
-| `adp semantic-model` | Build Cube.js semantic model |
-| `adp sql "question"` | Convert NL to read-only SQL |
-| `adp docs` | Generate data dictionary |
-| `adp ui` | Start web console at http://127.0.0.1:8765 |
-| `adp mcp-server` | Start MCP server for AI IDE integration |
+| Example | Path | Tables | Best for |
+|---|---|---|---|
+| [shop](examples/shop/) | B — CSV | 2 | Fastest 2-minute demo |
+| [product-transactions](examples/product-transactions/) | A — spec | 3 | Minimal spec-only starter |
+| [customer-transaction](examples/customer-transaction/) | A or B | 2 (+ KYC) | Full 98-column e-commerce model |
+| [healthcare](examples/healthcare/) | A — spec | 5 | Temporal rules, hierarchies |
+| [retail-ecommerce](examples/retail-ecommerce/) | B — CSV | 4 | Retail star schema, 32/32 checks |
 
 ---
 
-## AI Provider for NL-to-SQL
+## Configuration
 
-```bash
-export MINIMAX_API_KEY=your_key_here    # default
-export OPENAI_API_KEY=your_key_here
-```
-
-Configure in `adp.yaml`:
-
-```yaml
-model_provider:
-  provider: minimax
-  base_url: https://api.minimax.io/v1
-  model: MiniMax-Text-01
-  api_key_env: MINIMAX_API_KEY
-```
-
-`provider: local` runs offline without LLM calls.
-
----
-
-## Data Connectors
+**Data sources** (`adp.yaml`):
 
 ```yaml
 sources:
   - name: csv_files
     type: csv
     path: ./data
-
   - name: postgres_prod
     type: postgres
     dsn: "postgresql+psycopg://user:${PGPASSWORD}@host:5432/shop"
     schema: public
 ```
 
-Secrets use `${ENV_VAR}` interpolation — plaintext rejected at load.
+Secrets use `${ENV_VAR}` interpolation — plaintext passwords are rejected.
+
+**AI provider** (for NL-to-SQL and `propose_spec`):
+
+```yaml
+model_provider:
+  provider: minimax          # minimax | openai | anthropic | gemini | local
+  api_key_env: MINIMAX_API_KEY
+```
+
+`provider: local` runs fully offline without LLM calls.
+
+**Declarative spec** (`spec.yaml`) — see [docs/SPEC-REFERENCE.md](docs/SPEC-REFERENCE.md):
+
+```yaml
+version: 1
+tables:
+  - name: dim_customer
+    columns:
+      - {name: customer_id, type: uuid, primary_key: true}
+      - {name: gender, type: string, values: {Male: 48, Female: 50, Other: 2}}
+      - {name: age, type: int, min: 18, max: 85}
+      - {name: signup_date, type: date, start: 2020-01-01, end: 2026-01-01}
+```
 
 ---
 
-## Worked Examples
+## Documentation
 
-### Retail e-commerce (4 tables, 32/32 checks validated)
-
-```bash
-cd examples/retail-ecommerce
-python make_data.py
-adp init --name retail && adp connect --name shop --type csv --path ./data
-adp scan && adp profile
-adp generate-data --rows 50000 --output parquet
-adp quality-check --report quality-report.md
-```
-
-### Customer + Transaction (declarative spec, 100/100 quality)
-
-```bash
-cd examples/customer-transaction
-adp apply-spec spec.yaml
-adp generate-data --rows 50000 --output parquet
-adp quality-check
-```
-
-### Healthcare (5 tables, 159 columns, 212 checks, 100/100 quality)
-
-```bash
-cd examples/healthcare
-adp apply-spec spec.yaml
-adp generate-data --rows 50000
-adp quality-check
-```
+| Guide | What it covers |
+|---|---|
+| [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) | Runnable E2E walkthrough — Paths A, B, C, D with expected outputs |
+| [docs/USE-CASES.md](docs/USE-CASES.md) | All 16 use cases — goal, commands, example, expected outcome |
+| [docs/SPEC-REFERENCE.md](docs/SPEC-REFERENCE.md) | Complete `spec.yaml` language reference |
+| [docs/MCP-GUIDE.md](docs/MCP-GUIDE.md) | All 26 MCP tools, agent flows, IDE setup |
+| [docs/AGENT-FLOW.md](docs/AGENT-FLOW.md) | Guided agent workflows (intake → KPI validation) |
+| [docs/USER-FLOW.md](docs/USER-FLOW.md) | Step-by-step internals for each CLI stage |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Design principles, pipeline detail, extension points |
+| [LOCAL-SETUP.md](LOCAL-SETUP.md) | macOS dev install and MCP setup |
 
 ---
 
@@ -362,34 +317,8 @@ cd data-generation-sdk
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev,all]"
 
-pytest          # run tests
-ruff check .    # lint
-mypy src        # type check
+pytest && ruff check . && mypy src
 ```
-
----
-
-## Publishing
-
-PyPI Trusted Publishing — no API tokens needed.
-
-```bash
-# Release candidate to TestPyPI
-git tag v0.2.0rc1 && git push origin v0.2.0rc1
-
-# Full release (triggered by GitHub Release)
-```
-
-See [`.github/workflows/publish.yml`](./.github/workflows/publish.yml).
-
----
-
-## Contributing
-
-Issues and PRs welcome:
-- No hardcoded domain logic
-- Every PR includes tests
-- Secrets never in code or config
 
 ---
 

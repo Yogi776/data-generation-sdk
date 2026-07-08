@@ -39,6 +39,12 @@ def _fail(e: Exception) -> None:
 @app.callback()
 def _version_callback() -> None:
     """AI Data Platform CLI."""
+    try:
+        from ai_data_platform.agent.setup import ensure_global_agent_skills
+
+        ensure_global_agent_skills()
+    except Exception:
+        pass
 
 
 @app.command()
@@ -60,9 +66,48 @@ def init(
     try:
         cfg_path = ADPClient(path).init(name, force=force)
         console.print(f"[green]✓[/green] Created {cfg_path}")
+        console.print(
+            "Agent setup: MCP configs + Cursor skills installed. "
+            "Run [bold]adp setup-agent[/bold] to re-sync or configure Claude."
+        )
         console.print("Next: [bold]adp connect[/bold] to add a data source.")
     except ADPError as e:
         _fail(e)
+
+
+@app.command("setup-agent")
+def setup_agent(
+    path: str = typer.Option(".", "--path", help="Project directory."),
+    client: str = typer.Option(
+        "all",
+        "--client",
+        "-c",
+        help="MCP client: cursor, claude, windsurf, vscode, or all.",
+    ),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing MCP configs."),
+) -> None:
+    """Install or re-sync agent skills and multi-client MCP configuration."""
+    from ai_data_platform.agent.setup import install_agent
+
+    clients = ["all"] if client == "all" else [c.strip() for c in client.split(",")]
+    result = install_agent(project_root=Path(path), clients=clients, force=force)
+    if result.get("mcp_configs"):
+        for p in result["mcp_configs"]:
+            console.print(f"[green]✓[/green] MCP config: {p}")
+    if result.get("skills"):
+        console.print(f"[green]✓[/green] Cursor skills: {', '.join(result['skills'])}")
+    claude = result.get("claude", {})
+    if claude.get("desktop_snippet"):
+        console.print("\n[bold]Claude Desktop[/bold] — paste into claude_desktop_config.json:")
+        console.print(claude["desktop_snippet"])
+    if claude.get("code_cli"):
+        cc = claude["code_cli"]
+        if cc.get("ok"):
+            console.print("[green]✓[/green] Claude Code: adp MCP server registered")
+        else:
+            console.print(f"[dim]Claude Code:[/dim] {cc.get('message', 'skipped')}")
+    for hint in result.get("hints", []):
+        console.print(f"[dim]→[/dim] {hint}")
 
 
 @app.command()
@@ -169,6 +214,31 @@ def apply_spec(
             f"{result['columns']} column(s), {result['relationships']} relationship(s)."
         )
         console.print("Next: [bold]adp generate-data --rows N[/bold]")
+    except ADPError as e:
+        _fail(e)
+
+
+@app.command("build-plan")
+def build_plan_cmd(
+    out: str = typer.Option("plan.json", "--out", "-o", help="Output Plan IR JSON path."),
+    rows: int = typer.Option(None, "--rows", "-r", help="Default rows per table."),
+    tables: str = typer.Option(None, "--tables", help="Comma-separated subset of tables."),
+    seed: int = typer.Option(None, "--seed", help="Deterministic seed."),
+    project: str = typer.Option(".", "--project", help="Project directory."),
+) -> None:
+    """Compile catalog metadata into Plan IR JSON (for Go executor or inspection)."""
+    from ai_data_platform.core.exceptions import ADPError
+    from ai_data_platform.sdk import ADPClient
+
+    try:
+        path = ADPClient(project).save_plan(
+            out,
+            rows=rows,
+            tables=[t.strip() for t in tables.split(",")] if tables else None,
+            seed=seed,
+        )
+        console.print(f"[green]✓[/green] Plan IR written to {path}")
+        console.print("Run with Go: [bold]adp-executor run --plan plan.json --output output/[/bold]")
     except ADPError as e:
         _fail(e)
 

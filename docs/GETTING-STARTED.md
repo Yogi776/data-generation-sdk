@@ -30,10 +30,11 @@ source /path/to/venv/bin/activate
 
 | Situation | Path | Time | Example |
 |---|---|---|---|
-| No data; you have a design doc or schema in mind | A — spec-only | ~5 min | `examples/healthcare` |
-| Have CSV/Parquet/DB samples you want to learn from | B — learn from data | ~10 min | `examples/shop` |
+| No data; you have a design doc or schema in mind | A — spec-only | ~5 min | `healthcare-claims` |
+| Have CSV/Parquet/DB samples you want to learn from | B — learn from data | ~10 min | `examples/customer-transaction` |
 | Using Cursor, Claude Code, or Windsurf | C — MCP | ~3 min | `cursor-test/` |
 | Want to explore generated data with SQL | D — Explorer | after any generate | `adp explore sql` |
+| Quality passes but KPIs drift from research targets | E — Calibrate | ~5 min | adjust `values` weights in spec |
 
 All paths end at `output/` with quality-validated synthetic data.
 
@@ -70,14 +71,11 @@ Run `adp apply-spec <spec.yaml>` to define your schema.
 Copy a ready-made spec from the examples:
 
 ```bash
-# For the smallest example (3 tables: products, transactions, customers)
-cp ../ai-data-platform/examples/product-transactions/spec.yaml .
-
-# Or the healthcare example (5 tables, 159 columns)
-cp ../ai-data-platform/examples/healthcare/spec.yaml .
-
-# Or customer-transaction (2 tables + KYC, 98 columns)
+# customer-transaction (2 tables + KYC, 98 columns)
 cp ../ai-data-platform/examples/customer-transaction/spec.yaml .
+
+# Or get the healthcare-claims spec from the GitHub repo:
+# https://github.com/Yogi776/data-generation-sdk/blob/main/healthcare-claims/spec.yaml
 ```
 
 Or create your own `spec.yaml`. See [SPEC-REFERENCE.md](SPEC-REFERENCE.md) for the full language.
@@ -192,20 +190,20 @@ Use this when you have representative data samples (CSVs, Parquet, DuckDB, Postg
 ### Step 1 — Init and connect
 
 ```bash
-cd examples/shop
-adp init --name shop-demo
-adp connect --name shop --type csv --path ./data
+cd examples/customer-transaction
+adp init --name crm-demo
+adp connect --name crm --type csv --path ./data
 ```
 
 > **Tip:** Put your CSV/Parquet files in a `./data/` folder. Point `--path` at that folder. Each file becomes a table named by its filename.
 
 **Files created:**
 ```
-examples/shop/
+examples/customer-transaction/
 ├── adp.yaml          # updated with source
 └── data/
-    ├── customers.csv
-    └── orders.csv
+    ├── dim_customer.csv
+    └── fact_transaction.csv
 ```
 
 **What success looks like:**
@@ -353,7 +351,7 @@ Here are exact prompts to try:
 
 **Path A (spec-only):**
 
-> "Apply the healthcare spec from `../ai-data-platform/examples/healthcare/spec.yaml` and generate 10,000 rows of test data. Run a quality check when done."
+> "Apply the customer-transaction spec from `../ai-data-platform/examples/customer-transaction/spec.yaml` and generate 10,000 rows of test data. Run a quality check when done."
 
 The agent will call: `apply_spec` → `generate_synthetic_data` → `run_quality_check`
 
@@ -369,7 +367,7 @@ The agent will call: `scan_sources` → `profile_source` → `generate_synthetic
 
 The agent will call: `preview_data` → `run_quality_check`
 
-See [MCP-GUIDE.md](MCP-GUIDE.md) for all 26 available tools and all 4 recommended agent flows.
+See [MCP-GUIDE.md](MCP-GUIDE.md) for all 25 available tools and all 4 recommended agent flows.
 
 ---
 
@@ -428,6 +426,62 @@ adp explore export "SELECT * FROM customers LIMIT 100" top_customers.csv
 ```
 
 All 13 `adp explore` subcommands mirror equivalent MCP tools (`list_datasets`, `execute_sql`, `preview_table`, etc.). See [MCP-GUIDE.md](MCP-GUIDE.md) for the MCP equivalents.
+
+---
+
+## Path E — Calibrate (when quality passes but KPIs drift)
+
+Use this when `quality-check` scores ≥ 95 but SQL reveals KPI distributions don't match your research targets (e.g., UPI payments generated at 52% but you researched 40%).
+
+### Step 1 — Identify the drift
+
+Run KPI SQL to compare generated vs target distributions:
+
+```bash
+adp explore sql "SELECT payment_method, round(count(*)*100.0/sum(count(*)) over(), 1) as pct FROM fact_transaction GROUP BY 1 ORDER BY 2 DESC"
+```
+
+Compare each value to your research notes.
+
+### Step 2 — Compute drift
+
+```
+drift = |generated_pct - research_pct| / research_pct
+```
+
+If any KPI drifts by more than 5%, patch the spec.
+
+### Step 3 — Patch spec weights
+
+Edit `spec.yaml` to adjust `values:` weights for the drifted column. For example, to fix UPI from 52% to 40%:
+
+```yaml
+# Before
+payment_method:
+  values: {UPI: 52, Credit_Card: 22, Debit_Card: 15, Wallet: 8, COD: 3}
+
+# After
+payment_method:
+  values: {UPI: 40, Credit_Card: 25, Debit_Card: 15, Wallet: 12, COD: 8}
+```
+
+### Step 4 — Re-apply and regenerate
+
+```bash
+adp apply-spec spec.yaml
+adp generate-data --rows 50000 --seed 42   # same seed for byte-identical output
+adp quality-check
+```
+
+### Step 5 — Re-verify KPIs
+
+```bash
+adp explore sql "SELECT payment_method, ... FROM fact_transaction GROUP BY 1"
+```
+
+Repeat until all KPIs are within tolerance (default 5%).
+
+> **Tip:** Use `--rows-per-table` to regenerate only specific tables while testing weight changes — faster iteration on large datasets.
 
 ---
 

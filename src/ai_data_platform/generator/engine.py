@@ -10,7 +10,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -291,11 +293,35 @@ def _build_chunk(
     return _apply_derives(pl.DataFrame(data), tp, rng)
 
 
+def _resolve_workers(parallel_workers: int) -> int:
+    """0 = auto (min(cpu_count, 8)); 1 = disabled."""
+    if parallel_workers <= 0:
+        return min(os.cpu_count() or 1, 8)
+    return max(1, parallel_workers)
+
+
+def _chunk_specs(total_rows: int, chunk_rows: int) -> list[tuple[int, int, int]]:
+    """Return (chunk_idx, offset, n) for each chunk in order."""
+    specs: list[tuple[int, int, int]] = []
+    remaining = total_rows
+    chunk_idx = 0
+    while True:
+        n = min(remaining, chunk_rows) if remaining > 0 else 0
+        offset = total_rows - remaining
+        specs.append((chunk_idx, offset, n))
+        remaining -= n
+        chunk_idx += 1
+        if remaining <= 0:
+            break
+    return specs
+
+
 def generate(
     plan: GenerationPlan,
     output_dir: str | Path,
     *,
     output_format: str = "parquet",
+    parallel_workers: int = 1,
 ) -> dict[str, Any]:
     """Execute a plan, streaming each chunk to disk. Returns {table: {rows, path}}.
 
@@ -325,25 +351,37 @@ def generate(
                 ).permutation(len(pool))
 
         writer = ChunkWriter(tp.name, output_dir, output_format)
-        # only the key columns are retained in memory (for children), not the rows
         key_cols = [cp.name for cp in tp.columns if cp.sampler in ("sequence", "uuid")]
         key_accum: dict[str, list[pl.Series]] = {c: [] for c in key_cols}
+        specs = _chunk_specs(tp.rows, plan.chunk_rows)
+        workers = _resolve_workers(parallel_workers)
+
+        if workers > 1 and len(specs) > 1:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(
+                        _build_chunk, plan, tp, idx, offset, n, key_pool, o2o_perm
+                    ): idx
+                    for idx, offset, n in specs
+                }
+                chunks_by_idx: dict[int, pl.DataFrame] = {}
+                for fut in futures:
+                    idx = futures[fut]
+                    chunks_by_idx[idx] = fut.result()
+            ordered = [chunks_by_idx[i] for i in range(len(specs))]
+        else:
+            ordered = [
+                _build_chunk(plan, tp, idx, offset, n, key_pool, o2o_perm)
+                for idx, offset, n in specs
+            ]
+
         total = 0
-        remaining = tp.rows
-        chunk_idx = 0
-        # always write at least one (possibly empty) chunk so the file + schema exist
-        while True:
-            n = min(remaining, plan.chunk_rows) if remaining > 0 else 0
-            offset = tp.rows - remaining
-            chunk_df = _build_chunk(plan, tp, chunk_idx, offset, n, key_pool, o2o_perm)
+        for chunk_df in ordered:
             writer.write_chunk(chunk_df)
             for c in key_cols:
-                key_accum[c].append(chunk_df.get_column(c))
-            total += n
-            remaining -= n
-            chunk_idx += 1
-            if remaining <= 0:
-                break
+                if c in chunk_df.columns:
+                    key_accum[c].append(chunk_df.get_column(c))
+            total += len(chunk_df)
         path = writer.close()
 
         # register this table's PK values for children

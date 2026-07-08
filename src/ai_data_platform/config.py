@@ -77,6 +77,11 @@ class GenerationConfig(BaseModel):
     seed: int = 42
     chunk_rows: int = 100_000
     output_format: Literal["csv", "parquet", "duckdb", "sql"] = "parquet"
+    # Parallel chunk builders: 0 = auto (min(cpu_count, 8)), 1 = disabled.
+    parallel_workers: int = Field(default=0, ge=0, le=64)
+    # Executor: python (default), go (external binary), auto (go when available + threshold met).
+    executor: Literal["python", "go", "auto"] = "python"
+    go_executor_threshold_rows: int = Field(default=10_000_000, ge=1)
 
 
 class SemanticConfig(BaseModel):

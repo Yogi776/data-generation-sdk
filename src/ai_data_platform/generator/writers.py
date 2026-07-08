@@ -107,15 +107,29 @@ def write_output(df: pl.DataFrame, table: str, output_dir: str | Path, fmt: str)
     return writer.close()
 
 
-def _sql_literal(v: object) -> str:
-    if v is None:
-        return "NULL"
-    if isinstance(v, bool):
-        return "TRUE" if v else "FALSE"
-    if isinstance(v, int | float):
-        return str(v)
-    s = str(v).replace("'", "''")
-    return f"'{s}'"
+def _sql_literals(series: pl.Series) -> list[str]:
+    """Per-column SQL literal list (vectorized column scan, not row iteration)."""
+    if series.dtype == pl.Boolean:
+        return [
+            "NULL" if v is None else ("TRUE" if v else "FALSE") for v in series.to_list()
+        ]
+    if series.dtype.is_numeric():
+        return ["NULL" if v is None else str(v) for v in series.to_list()]
+    return [
+        "NULL" if v is None else f"'{str(v).replace(chr(39), chr(39) * 2)}'"
+        for v in series.to_list()
+    ]
+
+
+def _sql_value_rows(df: pl.DataFrame) -> list[str]:
+    """Build parenthesized value tuples column-first (faster than iter_rows)."""
+    if df.is_empty():
+        return []
+    col_literals = [_sql_literals(df.get_column(c)) for c in df.columns]
+    return [
+        "(" + ", ".join(vals) + ")"
+        for vals in zip(*col_literals, strict=True)
+    ]
 
 
 def _sql_insert_block(df: pl.DataFrame, table: str, batch: int = 500) -> str:
@@ -123,13 +137,9 @@ def _sql_insert_block(df: pl.DataFrame, table: str, batch: int = 500) -> str:
     if df.is_empty():
         return ""
     cols = ", ".join(f'"{c}"' for c in df.columns)
+    value_rows = _sql_value_rows(df)
     lines: list[str] = []
-    buf: list[str] = []
-    for row in df.iter_rows():
-        buf.append("(" + ", ".join(_sql_literal(v) for v in row) + ")")
-        if len(buf) >= batch:
-            lines.append(f'INSERT INTO "{table}" ({cols}) VALUES\n' + ",\n".join(buf) + ";")
-            buf = []
-    if buf:
-        lines.append(f'INSERT INTO "{table}" ({cols}) VALUES\n' + ",\n".join(buf) + ";")
+    for i in range(0, len(value_rows), batch):
+        chunk = value_rows[i : i + batch]
+        lines.append(f'INSERT INTO "{table}" ({cols}) VALUES\n' + ",\n".join(chunk) + ";")
     return "\n".join(lines) + "\n"

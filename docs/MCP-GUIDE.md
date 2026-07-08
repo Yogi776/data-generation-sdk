@@ -1,6 +1,6 @@
 # MCP Guide
 
-Complete reference for the MCP (Model Context Protocol) integration: setup for every IDE, all 26 tools with parameters, agent flows, and example conversations.
+Complete reference for the MCP (Model Context Protocol) integration: setup for every IDE, all 25 tools with parameters, agent flows, and example conversations.
 
 The MCP server (`adp mcp-server`) is a thin adapter over the same `ADPClient` backend as the CLI, SDK, REST API, and Web UI. Every capability reachable from the CLI is reachable here.
 

@@ -14,7 +14,7 @@ How it works
 2. Locate the sdist artifact and extract its SHA256 digest.
 3. Use homebrew-pypi-poet to generate `resource` blocks for all transitive
    dependencies of ai-data-platform[all].
-4. Merge poet's output with the stable header/footer in formula_template.rb.
+4. Patch poet's output: url, sha256, depends_on (python@3.12), desc, homepage.
 5. Write the resulting formula to --output (or stdout).
 
 One-time poet setup
@@ -38,7 +38,6 @@ from pathlib import Path
 
 PACKAGE_NAME = "ai-data-platform"
 PYPI_JSON_URL_TEMPLATE = "https://pypi.org/pypi/{name}/{version}/json"
-FORMULA_TEMPLATE_PATH = Path(__file__).parent / "formula_template.rb"
 
 
 # ---------------------------------------------------------------------------
@@ -59,43 +58,77 @@ def sha256_of_url(url: str) -> str:
         return h.hexdigest()
 
 
-def run_poet(package_with_extras: str, version: str) -> str:
+def run_poet(package: str, version: str) -> str:
     """
-    Call homebrew-pypi-poet to generate resource blocks.
+    Call homebrew-pypi-poet to generate a complete formula.
     poet must be installed and on PATH.
     """
-    cmd = ["poet", "-f", package_with_extras]
+    cmd = ["poet", "-f", f"{package}=={version}"]
     result = subprocess.run(
         cmd,
         capture_output=True,
         text=True,
         check=True,
-        env={**os.environ, "PIP_CONSTRAINT": ""},
     )
     return result.stdout
 
 
-def substitute_template(
-    template: str,
+def patch_formula(
+    formula_text: str,
     version: str,
     pypi_url: str,
     sha256: str,
-    poet_output: str,
 ) -> str:
     """
-    Fill in the formula template with version-specific values.
-    The template uses {{placeholder}} syntax.
+    Patch poet's output formula:
+    - Replace the top-level URL with the sdist URL for the specific version
+    - Replace the top-level SHA256 with the actual digest
+    - Leave resource URLs/SHAs untouched (they have their own values)
+    - Ensure depends_on python@3.12 (poet sometimes uses python@3.y)
+    - Set desc and homepage to our values
     """
-    substitutions = {
-        "{{version}}": version,
-        "{{pypi_url}}": pypi_url,
-        "{{sha256}}": sha256,
-        "{{poet_resources}}": poet_output,
-    }
-    result = template
-    for placeholder, value in substitutions.items():
-        result = result.replace(placeholder, value)
-    return result
+    lines = formula_text.splitlines(keepends=True)
+    result_lines: list[str] = []
+    in_resource = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Track whether we're inside a resource block (indented lines after "resource ")
+        if stripped.startswith("resource "):
+            in_resource = True
+            result_lines.append(line)
+            continue
+        # Top-level lines are at 2 spaces; resource body is at 4+ spaces
+        if in_resource and line.startswith("    "):
+            result_lines.append(line)
+            continue
+        # Exited resource block
+        in_resource = False
+
+        # Patch top-level URL line
+        if stripped.startswith("url "):
+            result_lines.append(f'  url "{pypi_url}"\n')
+        # Patch top-level SHA256 line
+        elif stripped.startswith("sha256 "):
+            result_lines.append(f'  sha256 "{sha256}"\n')
+        # Force python@3.12
+        elif stripped.startswith("depends_on ") and "python" in stripped:
+            result_lines.append('  depends_on "python@3.12"\n')
+        # Replace placeholder desc
+        elif stripped.startswith('desc "') and "Shiny new formula" in stripped:
+            result_lines.append(
+                '  desc "AI Data Platform: synthetic data, catalog, semantic models, MCP server"\n'
+            )
+        # Replace placeholder homepage
+        elif stripped.startswith("homepage ") and ("None" in stripped or "example.com" in stripped):
+            result_lines.append(
+                '  homepage "https://github.com/Yogi776/data-generation-sdk"\n'
+            )
+        else:
+            result_lines.append(line)
+
+    return "".join(result_lines)
 
 
 # ---------------------------------------------------------------------------
@@ -127,11 +160,9 @@ def main() -> int:
     args = parser.parse_args()
 
     version = args.version.strip()
-    package_with_extras = f"{PACKAGE_NAME}{args.extras}".replace("[all]", "")
-    # homebrew-pypi-poet expects plain "pkg" or "pkg[extra]" without the [all] extras
-    poet_package = PACKAGE_NAME + args.extras if args.extras else PACKAGE_NAME
-    # poet -f expects the full package spec with extras
-    poet_arg = f"{PACKAGE_NAME}{args.extras}"
+    extras = args.extras.strip()
+    # poet -f package==version handles [extras] natively
+    poet_pkg = f"{PACKAGE_NAME}{extras}" if extras else PACKAGE_NAME
 
     # Step 1 — PyPI metadata
     pypi_json = fetch(PYPI_JSON_URL_TEMPLATE.format(name=PACKAGE_NAME, version=version))
@@ -151,13 +182,13 @@ def main() -> int:
     pypi_url: str = sdist_entry["url"]
     sha256: str = sdist_entry["digests"]["sha256"]
 
-    print(f"  Package : {PACKAGE_NAME}=={version}", file=sys.stderr)
+    print(f"  Package : {poet_pkg}=={version}", file=sys.stderr)
     print(f"  URL     : {pypi_url}", file=sys.stderr)
     print(f"  SHA256  : {sha256}", file=sys.stderr)
 
-    # Step 2 — homebrew-pypi-poet
+    # Step 2 — homebrew-pypi-poet generates a complete formula
     try:
-        poet_output = run_poet(poet_package, version)
+        poet_output = run_poet(poet_pkg, version)
     except FileNotFoundError:
         print(
             "ERROR: homebrew-pypi-poet not found. Install with: pip install homebrew-pypi-poet",
@@ -168,20 +199,13 @@ def main() -> int:
         print(f"ERROR: poet exited {exc.returncode}: {exc.stderr}", file=sys.stderr)
         return 1
 
-    # Step 3 — merge with template
-    template_path = FORMULA_TEMPLATE_PATH
-    if template_path.exists():
-        template = template_path.read_text(encoding="utf-8")
-    else:
-        # Inline fallback template when run outside the repo
-        template = _FALLBACK_TEMPLATE
-
-    formula = substitute_template(template, version, pypi_url, sha256, poet_output)
-
     # Validate class name
-    if "class AiDataPlatform" not in formula:
+    if "class AiDataPlatform" not in poet_output:
         print("ERROR: poet output missing 'class AiDataPlatform'; formula may be malformed.", file=sys.stderr)
         return 1
+
+    # Step 3 — patch poet's output: url, sha256, depends_on, desc, homepage
+    formula = patch_formula(poet_output, version, pypi_url, sha256)
 
     # Step 4 — output
     if args.dry_run or args.output is None:
@@ -191,37 +215,6 @@ def main() -> int:
         print(f"Written: {args.output}", file=sys.stderr)
 
     return 0
-
-
-_FALLBACK_TEMPLATE = """\
-class AiDataPlatform < Formula
-  include Language::Python::Virtualenv
-
-  desc "AI Data Platform: synthetic data, catalog, semantic models, MCP server"
-  homepage "https://github.com/Yogi776/data-generation-sdk"
-  url "{{pypi_url}}"
-  sha256 "{{sha256}}"
-  license "Apache-2.0"
-
-  depends_on "python@3.12"
-
-{{poet_resources}}
-
-  def install
-    virtualenv_install_with_resources
-  end
-
-  test do
-    assert_match version.to_s, shell_output("#{bin}/adp version")
-    shell_output("#{bin}/adp --help")
-    shell_output("#{bin}/adp mcp-server --help")
-    cd testpath do
-      system bin/"adp", "init", "--name", "brew-smoke"
-      assert_path_exists testpath/"adp.yaml"
-    end
-  end
-end
-"""
 
 
 if __name__ == "__main__":

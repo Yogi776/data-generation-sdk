@@ -14,35 +14,38 @@ pip install ai-data-platform
 
 ## Architecture
 
+The system has four interfaces (CLI, REST API, Web UI, MCP) that all call the same `ADPClient` backend. The backend coordinates six core modules:
+
+- **Connectors** — CSV, Parquet, DuckDB, PostgreSQL, MySQL
+- **Metadata** — catalog stored in SQLite via SQLAlchemy
+- **Profiler** — statistics, PII detection, PK/FK inference
+- **Generator** — Plan IR compilation with FK-safe, seeded PRNG
+- **Quality** — auto-derived rules with weighted score
+- **Semantic Builder** — generates Cube.js YAML models
+
 ```
-                    ┌─────────────────────────────────────────┐
-                    │  YOU  (via CLI / API / UI / MCP / SDK)  │
-                    └──────────────────┬──────────────────────┘
-                                       │
-                    ┌──────────────────▼──────────────────────┐
-                    │              ADPClient                   │
-                    │   (one backend, every interface)         │
-                    └──────────────────┬──────────────────────┘
-                                       │
-     ┌──────────┬──────────┬──────────┼──────────┬──────────┐
-     │          │          │          │          │          │
-┌────▼───┐ ┌────▼───┐ ┌────▼───┐ ┌──▼────┐ ┌──▼────┐ ┌──▼────┐
-│Connector│ │Metadata│ │Profiler│ │Generator│ │Quality│ │Semantic│
-│Registry │ │Catalog │ │        │ │        │ │       │ │Builder │
-│ csv     │ │SQLite  │ │stats   │ │Plan IR │ │checks │ │Cube.js │
-│ parquet │ │        │ │PII     │ │FK-safe │ │score  │ │YAML    │
-│ duckdb  │ └────────┘ │PK/FK   │ │seeded  │ │       │ │        │
-│ postgres│            │        │ │        │ │       │ │        │
-│ mysql   │            └────────┘ │        │ │       │ │        │
-└─────────┘                       └────────┘ └───────┘ └────────┘
+USER (CLI / API / UI / MCP / SDK)
+         |
+         v
+   +------------+
+   | ADPClient  |  <-- one backend, every interface
+   +------+-----+
+         |
+  +------+------+------+------+------+------+
+  |      |      |      |      |      |      |
+  v      v      v      v      v      v      v
+Connector Metadata Profiler Generator Quality Semantic SQL
+Registry  Catalog                       Builder  Assistant
+  v        v         v       v        v         v
+Sources  SQLite    Stats   Writers  Checks   LLM Provider
 ```
 
 **Design principles:**
 - **One backend, many faces** — CLI, API, UI, and MCP all call the same `ADPClient`
-- **Metadata-driven** — samplers, checks, and models derive from your catalog; no domain hardcoding
-- **Plan IR** — generation compiles to a versioned JSON plan, decoupled from execution
-- **Deterministic** — same catalog + seed = byte-identical datasets every time
-- **Safe by design** — budgeted sampling, SELECT-only SQL guard, PII never sent to LLMs
+- **Metadata-driven** — samplers, checks, and models derive from your catalog
+- **Plan IR** — generation compiles to a versioned JSON plan
+- **Deterministic** — same catalog + seed = byte-identical output
+- **Safe by design** — SELECT-only SQL guard, PII never sent to LLMs
 
 ---
 
@@ -50,49 +53,44 @@ pip install ai-data-platform
 
 **Two entry paths:**
 
-```
-Path A: Config-Only (no data needed)
-─────────────────────────────────────
-  spec.yaml  ──►  adp apply-spec  ──►  adp generate-data  ──►  output/
-
-Path B: Learn from your data
-─────────────────────────────────────
-  adp connect  ──►  adp scan  ──►  adp profile  ──►  adp generate-data  ──►  output/
-                                                              │
-                                           adp quality-check ──┘
-```
-
-**The pipeline:**
+**Path A: Config-Only (no source data needed)**
 
 ```
-  ┌────────────┐     ┌──────────────────┐     ┌────────────────┐
-  │   scan     │ ──► │     profile      │ ──► │  generate-data │
-  │  schemas   │     │ stats, PII,       │     │  Plan IR +    │
-  │  FKs       │     │ PK/FK confidence  │     │  seeded PRNG  │
-  └────────────┘     └──────────────────┘     └───────┬────────┘
-                                                      │
-                              ┌───────────────────────┼───────────────────────┐
-                              │                       │                       │
-                         ┌────▼────┐            ┌────▼────┐            ┌────▼────┐
-                         │ quality │            │ semantic│            │ NL SQL  │
-                         │ -check  │            │ -model  │            │         │
-                         │ score   │            │ Cube.js │            │ read-   │
-                         └─────────┘            └─────────┘            │ only   │
-                                                                     └────────┘
+spec.yaml  ->  adp apply-spec  ->  adp generate-data  ->  output/
+```
+
+**Path B: Learn from your data**
+
+```
+adp connect  ->  adp scan  ->  adp profile  ->  adp generate-data  ->  output/
+                                                        |
+                                        adp quality-check  ----+
+```
+
+**The generation pipeline:**
+
+```
+scan         profile       generate-data
+schemas  ->  stats, PII  ->  Plan IR compiled
+FKs          PK/FK        seeded PRNG runs
+                               |
+              +----------------+----------------+
+              |                |                |
+              v                v                v
+         CSV/Parquet      DuckDB/SQL        quality-check
+         output           output                |
+                                            score + report
 ```
 
 **Agent integration (MCP):**
 
 ```
-  Claude / Cursor / Windsurf
-           │
-           │ 11 tools: scan, profile, generate_synthetic_data,
-           │           run_quality_check, preview_data, ...
-           ▼
-     MCP Server (adp mcp-server)
-           │
-           ▼
-      ADPClient
+Claude / Cursor / Windsurf
+    |
+    |  11 tools: scan, profile, generate_synthetic_data,
+    |            run_quality_check, preview_data, sql, ...
+    v
+adp mcp-server  ->  ADPClient  ->  output/
 ```
 
 ---

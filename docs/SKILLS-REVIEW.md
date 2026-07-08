@@ -4,7 +4,31 @@
 > engine actually deliver today. Verdict per skill: ✅ implemented ·
 > 🟡 partial · ⬜ roadmap.
 
-**Agent domain (Cursor + MCP):** Seven bundled Cursor skills (`adp-orchestrator`, `adp-intake`, `adp-domain-research`, `adp-spec-author`, `adp-generate-validate`, `adp-analytics-readiness`, `adp-calibrate`) plus five MCP prompts mirror the same flows for all clients. See [AGENT-FLOW.md](AGENT-FLOW.md).
+**Agent domain (Cursor + MCP):** Seven bundled Cursor skills plus five MCP prompts mirror the same flows for all clients. See [AGENT-FLOW.md](AGENT-FLOW.md).
+
+## Skill name mapping
+
+The original plan named skills descriptively; the installed files use the `adp-*` convention below:
+
+|| Plan name | Installed skill / prompt | Notes |
+||---|---|---|
+| Orchestrator | `adp-orchestrator` | Routes to correct flow A–E |
+| Intake wizard | `adp-intake` | Phase 0–1 questions |
+| Domain researcher | `adp-domain-research` | Web search + research notes |
+| Spec author | `adp-spec-author` | Draft + user-approve YAML |
+| Generate + validate | `adp-generate-validate` | generate_synthetic_data → run_quality_check |
+| Analytics readiness | `adp-analytics-readiness` | execute_sql → validate_business_questions |
+| Calibrate | `adp-calibrate` | KPI drift loop |
+
+**Five MCP prompts** (work in all clients, not just Cursor):
+
+| Prompt | Purpose |
+||---|
+| `agent_orchestrator` | Route to flow A–E |
+| `intake_wizard` | Phase 0–1 questions |
+| `research_and_generate` | Full research → spec → generate → KPI |
+| `calibrate_dataset` | KPI drift loop |
+| `new_dataset_wizard` | Light guided wizard |
 
 ## The 6 MVP skills — all implemented ✅
 
@@ -35,7 +59,7 @@ from overriding them with gibberish `format` patterns (fix from live review).
 | industry-rules-engine | 🟡 | Rules are *declarative per spec* (after/expr/null_unless/values_by cover claims-after-encounters, balances, lifecycle states). Curated per-industry rule packs (KYC, HIPAA field sets): ⬜ — by design, packs are just spec files; ship as `examples/` templates |
 | distribution-&-realism | 🟡 | Weighted categories, lognormal/Poisson/normal, nulls, hierarchies, researched weights ✅. Seasonality/event-spikes/fraud-pattern injection as first-class spec keys: ⬜ (fraud possible today via values weights + null_unless) |
 | large-scale-generator | 🟡 | Chunked/streaming Polars+Arrow; 1M cap per MCP call, unbounded via CLI. Partitioned output, Spark/Go executors: ⬜ (Plan IR is the contract; platform M7) |
-| mcp-data-agent | ✅ | 26 tools + 5 prompts (`agent_orchestrator`, `intake_wizard`, `research_and_generate`, `calibrate_dataset`, `new_dataset_wizard`); Cursor skills auto-installed via `adp init` |
+| mcp-data-agent | ✅ | 25 tools + 5 prompts (`agent_orchestrator`, `intake_wizard`, `research_and_generate`, `calibrate_dataset`, `new_dataset_wizard`); Cursor skills auto-installed via `adp init` |
 | database-connector | 🟡 | Postgres, MySQL, DuckDB, CSV, Parquet live; Snowflake/Trino/BigQuery interface-complete placeholders; Databricks/S3-Iceberg ⬜ |
 | schema-evolution | 🟡 | Catalog schema_version + source fingerprints + soft relationship updates ✅; dataset versioning/compat guarantees ⬜ |
 | privacy-safe-generator | ✅* | All generated PII is fake-by-construction (no source values copied — tested); PII detection 3-signal; PII-safe LLM prompts. *Masking/tokenizing REAL data is out of scope for a generator (roadmap: platform governance) |

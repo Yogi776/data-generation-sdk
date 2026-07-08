@@ -16,72 +16,41 @@ pip install ai-data-platform
 
 ```mermaid
 flowchart TB
-    subgraph Interfaces["🔌 Interfaces (thin adapters, zero logic)"]
-        CLI["CLI<br>Typer<br>`adp`"]
-        API["REST API<br>FastAPI"]
-        UI["Web UI<br>Static"]
-        MCP["MCP<br>stdio"]
+    subgraph Interfaces["Interfaces"]
+        CLI["CLI (Typer, adp)"]
+        API["REST API (FastAPI)"]
+        UI["Web UI (static)"]
+        MCP["MCP (stdio)"]
     end
 
-    subgraph Core["⚙️ ADPClient (sdk.py — the ONLY backend)"]
-        ADP["ADPClient"]
-    end
+    ADP["ADPClient (sdk.py)"]
 
-    subgraph Modules["📦 Core Modules"]
-        direction TB
-        CONNECT["🔗 Connectors<br>CSV · Parquet · DuckDB · PostgreSQL · MySQL<br>+ Registry"]
-        META["📋 Metadata<br>Catalog: SQLite + SQLAlchemy<br>Scan · Models"]
-        PROF["📊 Profiler<br>Stats · PII · PK/FK inference"]
-        GEN["🎲 Generator<br>Plan IR + Samplers<br>FK-safe writers"]
-        QUAL["✅ Quality<br>Derived checks + Score"]
-        SEM["🧠 Semantic<br>Fact/Dim → Cube YAML"]
-        SQL["💬 SQL Assistant<br>NL→SQL · guarded"]
-        DOCS["📄 Docs<br>Data Dictionary"]
-    end
-
-    subgraph Sources["📥 Sources"]
-        CSV["CSV"]
-        PARQUET["Parquet"]
-        DUCKDB["DuckDB"]
-        PG["PostgreSQL"]
-        MYSQL["MySQL"]
-    end
-
-    subgraph Outputs["📤 Outputs"]
-        CSV_OUT["CSV"]
-        PARQUET_OUT["Parquet"]
-        DUCKDB_OUT["DuckDB"]
-        SQL_OUT["SQL"]
-    end
-
-    subgraph Providers["🤖 LLM Providers"]
-        MINIMAX["MiniMax<br>default"]
-        OPENAI["OpenAI"]
-        ANTHROPIC["Anthropic"]
-        GEMINI["Gemini"]
-        STUB["Local Stub"]
+    subgraph Modules
+        CONNECT["Connectors (CSV, Parquet, DuckDB, PostgreSQL, MySQL)"]
+        META["Metadata (Catalog: SQLite + SQLAlchemy)"]
+        PROF["Profiler (Stats, PII, PK/FK inference)"]
+        GEN["Generator (Plan IR, FK-safe, seeded)"]
+        QUAL["Quality (derived checks + score)"]
+        SEM["Semantic (Fact/Dim to Cube YAML)"]
+        SQL["SQL Assistant (NL to SQL, guarded)"]
+        DOCS["Docs (Data Dictionary)"]
     end
 
     Interfaces --> ADP
     ADP --> Modules
-    CONNECT --> Sources
-    GEN --> Outputs
-    SEM --> Providers
-    SQL --> Providers
+    CONNECT -->["CSV, Parquet, DuckDB, PostgreSQL, MySQL"]
+    GEN -->["CSV, Parquet, DuckDB, SQL"]
 
     style Interfaces fill:#1a1a2e,stroke:#e94560,color:#eee
-    style Core fill:#16213e,stroke:#0f3460,color:#eee
+    style ADP fill:#16213e,stroke:#0f3460,color:#eee
     style Modules fill:#0f3460,stroke:#e94560,color:#eee
-    style Sources fill:#1a1a2e,stroke:#533483,color:#eee
-    style Outputs fill:#1a1a2e,stroke:#533483,color:#eee
-    style Providers fill:#1a1a2e,stroke:#533483,color:#eee
 ```
 
 **Design principles:**
 - **One backend, many faces** — CLI, API, UI, and MCP all call the same `ADPClient`
 - **Metadata-driven** — samplers, checks, and models derive from your catalog; no domain hardcoding
 - **Plan IR** — generation compiles to a versioned JSON plan, decoupled from execution
-- **Deterministic** — same catalog + seed ⇒ byte-identical datasets every time
+- **Deterministic** — same catalog + seed = byte-identical datasets every time
 - **Safe by design** — budgeted sampling, SELECT-only SQL guard, PII never sent to LLMs, writes confined to the project directory
 
 ---
@@ -90,185 +59,124 @@ flowchart TB
 
 ```mermaid
 flowchart TD
-    START(["🚀 User Entry Point"])
+    START(("User"))
+    PATH_A["Config-only: adp apply-spec spec.yaml"]
+    PATH_B["Learn from data: adp scan + adp profile"]
 
-    subgraph Entry["Choose Your Path"]
-        PATH_A["📋 Config-only<br>`adp apply-spec spec.yaml`"]
-        PATH_B["🔍 Learn from data<br>`adp scan` → `adp profile`"]
-    end
+    START --> PATH_A
+    START --> PATH_B
 
-    START --> Entry
-
-    subgraph ConfigPath["⚙️ Config-Only Path (No Data Required)"]
-        SPEC["`spec.yaml`<br>tables · columns · types · PKs<br>categorical weights · numeric shapes<br>date ranges · FK joins · expressions"]
-        APPLY["`adp apply-spec`<br>parses spec → catalog<br>compiles plan IR"]
-    end
+    SPEC["spec.yaml: tables, columns, types, PKs, weights, ranges, FKs"]
+    APPLY["adp apply-spec: parses spec to catalog, compiles Plan IR"]
 
     PATH_A --> SPEC --> APPLY
 
-    subgraph DataPath["🔍 Data Learning Path"]
-        CONNECT["`adp connect`<br>CSV · Parquet · DuckDB<br>PostgreSQL · MySQL"]
-        SCAN["`adp scan`<br>list tables · columns · types<br>infer FK candidates<br>naming conventions"]
-        PROFILE["`adp profile`<br>Polars on sampled rows<br>nulls · distributions · PII<br>PK uniqueness · FK inclusion"]
-    end
+    CONNECT["adp connect: CSV, Parquet, DuckDB, PostgreSQL, MySQL"]
+    SCAN["adp scan: discovers tables, columns, FK candidates"]
+    PROFILE["adp profile: nulls, distributions, PII, PK/FK confidence"]
 
     PATH_B --> CONNECT --> SCAN --> PROFILE
 
-    subgraph Catalog["📋 Metadata Catalog (SQLite)"]
-        CT["`sources` — connection configs"]
-        TT["`tables` — name · type · row_count"]
-        CT2["`columns` — name · type · nullable<br>PII flag · profile stats"]
-        REL["`relationships`<br>FK pairs · confidence"]
-        QR["`quality_rules`<br>derived from metadata"]
+    APPLY & PROFILE --> CATALOG["Metadata Catalog (SQLite)"]
+
+    CATALOG --> PLAN_IR["Plan IR (JSON, versioned, per-table samplers)"]
+    PLAN_IR --> SEEDED["Seeded PRNG (deterministic output)"]
+
+    subgraph SAMPLERS
+        SEQ["sequence/uuid for PKs"]
+        CAT["weighted choice for categoricals"]
+        MONEY["lognormal for money/amounts"]
+        COUNT["Poisson floor for counts"]
+        DATE["uniform date range for timestamps"]
+        EXPR["row-level arithmetic expr"]
     end
 
-    APPLY & PROFILE --> Catalog
-    CT2 -.-"references<br>FKs"-> REL
+    SEEDED --> SAMPLERS --> WRITERS["Writers: CSV, Parquet, DuckDB, SQL"]
 
-    subgraph Generation["🎲 Generation Engine"]
-        PLAN_IR["📄 Plan IR<br>JSON · versioned<br>per-table samplers<br>FK strategies · seeds"]
-        SEEDED["🔄 Seeded PRNG<br>`sha256(seed, table, chunk)`<br>deterministic output"]
+    WRITERS --> OUT_DATA["output/ (CSV, Parquet, DuckDB)"]
 
-        subgraph Samplers["Sampler Registry"]
-            SEQ["sequence / uuid<br>for PKs"]
-            CAT["weighted choice<br>for categoricals"]
-            MONEY["lognormal<br>for money/amounts"]
-            COUNT["Poisson floor<br>for counts"]
-            DATE["uniform date range<br>for timestamps"]
-            HIER["hierarchical<br>values_by mapping"]
-            EXPR["row-level<br>arithmetic expr"]
-        end
+    WRITERS --> RULES["Rules: unique, not-null, range, accepted-values, FK"]
+    RULES --> CHECKS["adp quality-check"]
+    CHECKS --> SCORE["Quality Score"]
+    SCORE --> REPORT["quality.md"]
 
-        WRITERS["📤 Writers<br>CSV · Parquet<br>DuckDB · SQL"]
-    end
+    CATALOG --> DETECT["Fact vs Dim detection"]
+    DETECT --> MEASURES["Measures: sum, count, avg, min, max"]
+    DETECT --> JOIN["Joins from FKs"]
+    MEASURES & JOIN --> CUBE["Cube.js YAML: model/cubes.yml"]
 
-    Catalog --> PLAN_IR --> SEEDED --> Samplers --> WRITERS
+    CATALOG --> QUESTION["Natural language question"]
+    QUESTION --> GROUNDED["Catalog-grounded prompt (PII-safe)"]
+    GROUNDED --> PROVIDER["LLM: MiniMax, OpenAI, Anthropic, Gemini, Local"]
+    PROVIDER --> SQL_OUT["SELECT statement (read-only)"]
 
-    subgraph Quality["✅ Quality Engine"]
-        RULES["Rules from metadata<br>unique · not-null · range<br>accepted-values · FK"]
-        CHECKS["`adp quality-check`<br>run all rules"]
-        SCORE["📊 Quality Score<br>weighted explained score"]
-        REPORT["`quality.md`<br>detailed report"]
-    end
-
-    WRITERS -.->"generated data"-> RULES
-    RULES --> CHECKS --> SCORE --> REPORT
-
-    subgraph Semantic["🧠 Semantic Layer"]
-        DETECT["Fact vs Dim detection<br>FK density + measure shape"]
-        MEASURES["Measures<br>sum · count · avg · min · max"]
-        JOIN["Joins from FKs<br>confirmed relationships"]
-        CUBE["Cube.js YAML<br>`model/cubes.yml`"]
-    end
-
-    Catalog --> DETECT --> MEASURES & JOIN --> CUBE
-
-    subgraph NL_SQL["💬 NL → SQL"]
-        QUESTION["Natural language question"]
-        GROUNDED["Catalog-grounded prompt<br>PII-safe (no sample values)"]
-        PROVIDER["LLM Provider<br>MiniMax · OpenAI · Anthropic<br>Gemini · Local stub"]
-        SQL_OUT["SELECT statement<br>validated read-only"]
-    end
-
-    Catalog --> GROUNDED
-    QUESTION --> GROUNDED --> PROVIDER --> SQL_OUT
-
-    subgraph Output["📤 Final Outputs"]
-        OUT_DATA["`output/` directory<br>CSV · Parquet · DuckDB"]
-        OUT_CUBE["`model/cubes.yml`"]
-        OUT_DOCS["`docs/`"]
-        OUT_QUALITY["`quality.md`"]
-    end
-
-    WRITERS --> OUT_DATA
-    CUBE --> OUT_CUBE
-    REPORT --> OUT_QUALITY
-
-    subgraph Agent["🤖 Agent Integration (MCP)"]
-        MCP["MCP Server<br>`adp mcp-server`"]
-        TOOLS["11 Tools<br>apply_spec · generate_synthetic_data<br>preview_data · run_quality_check<br>scan · profile · semantic_model<br>sql · docs · ui"]
-        CLAUDE["Claude · Cursor · Windsurf"]
-    end
-
-    OUT_DATA -.-> MCP
-    MCP --> TOOLS --> CLAUDE
+    OUT_DATA -.-> MCP_SERVER["MCP Server (adp mcp-server)"]
+    MCP_SERVER --> TOOLS["11 Tools: apply_spec, generate_synthetic_data, run_quality_check, ..."]
+    TOOLS --> AGENTS["Claude, Cursor, Windsurf"]
 
     style START fill:#e94560,stroke:#fff,color:#fff
-    style Entry fill:#1a1a2e,stroke:#0f3460,color:#eee
-    style ConfigPath fill:#1a1a2e,stroke:#0f3460,color:#eee
-    style DataPath fill:#1a1a2e,stroke:#0f3460,color:#eee
-    style Catalog fill:#0f3460,stroke:#e94560,color:#eee
-    style Generation fill:#16213e,stroke:#e94560,color:#eee
-    style Quality fill:#16213e,stroke:#e94560,color:#eee
-    style Semantic fill:#16213e,stroke:#e94560,color:#eee
-    style NL_SQL fill:#16213e,stroke:#e94560,color:#eee
-    style Agent fill:#1a1a2e,stroke:#533483,color:#eee
-    style Output fill:#1a1a2e,stroke:#533483,color:#eee
+    style PATH_A fill:#1a1a2e,stroke:#0f3460,color:#eee
+    style PATH_B fill:#1a1a2e,stroke:#0f3460,color:#eee
+    style CATALOG fill:#0f3460,stroke:#e94560,color:#eee
     style PLAN_IR fill:#0f3460,stroke:#533483,color:#eee
-    style SEEDED fill:#0f3460,stroke:#533483,color:#eee
     style WRITERS fill:#0f3460,stroke:#533483,color:#eee
+    style RULES fill:#16213e,stroke:#e94560,color:#eee
+    style OUT_DATA fill:#1a1a2e,stroke:#533483,color:#eee
+    style MCP_SERVER fill:#1a1a2e,stroke:#533483,color:#eee
 ```
 
 ```mermaid
 sequenceDiagram
-    participant U as 👤 User
-    participant CLI as CLI `adp`
+    participant U as User
+    participant CLI
     participant SDK as ADPClient
     participant CAT as Catalog
     participant GEN as Generator
     participant QUAL as Quality
-    participant OUT as Output
 
     rect rgb(20, 20, 50)
-        Note over U,OUT: Path A: Config-Only (No Data)
+        Note over U,QUAL: Path A: Config-Only (No Data)
         U->>CLI: adp apply-spec spec.yaml
-        CLI->>SDK: apply_spec(spec_yaml)
-        SDK->>CAT: parse & store catalog
+        CLI->>SDK: apply_spec()
+        SDK->>CAT: parse and store catalog
         SDK->>GEN: compile_plan_ir()
-        GEN-->>CAT: plan IR
         U->>CLI: adp generate-data --rows 50k
         CLI->>SDK: generate_data(rows=50k)
-        SDK->>GEN: execute_plan(plan_ir)
-        GEN->>OUT: write parquet/csv
+        SDK->>GEN: execute_plan()
+        GEN->>U: output written
         U->>CLI: adp quality-check
         CLI->>SDK: run_quality_check()
-        SDK->>QUAL: derive & run rules
+        SDK->>QUAL: derive and run rules
         QUAL-->>SDK: score + report
     end
 
     rect rgb(20, 50, 40)
-        Note over U,OUT: Path B: Learn from Data
-        U->>CLI: adp connect --type csv --path ./data
-        CLI->>SDK: connect(source_config)
+        Note over U,QUAL: Path B: Learn from Data
+        U->>CLI: adp connect --type csv
+        CLI->>SDK: connect()
         U->>CLI: adp scan
         CLI->>SDK: scan()
-        SDK->>CAT: store schema + FK candidates
+        SDK->>CAT: store schema + FKs
         U->>CLI: adp profile
         CLI->>SDK: profile()
-        SDK->>CAT: store stats + PII + PK/FK
-        U->>CLI: adp generate-data --rows 100k
-        CLI->>SDK: generate_data(rows=100k)
+        SDK->>CAT: store stats + PII
+        U->>CLI: adp generate-data
+        CLI->>SDK: generate_data()
         SDK->>GEN: compile + execute
-        GEN->>OUT: generated data
+        GEN->>U: generated data
     end
 
     rect rgb(50, 20, 50)
-        Note over U,OUT: Agent Path: MCP
-        U->>CLAUDE: "Generate 10k test rows"
-        CLAUDE->>MCP: apply_spec(spec_yaml)
-        MCP->>SDK: apply_spec()
-        CLAUDE->>MCP: generate_synthetic_data(rows=10k)
-        MCP->>SDK: generate_data(rows=10k)
-        SDK->>OUT: write output
-        CLAUDE->>MCP: run_quality_check()
-        MCP->>SDK: run_quality_check()
-        SDK-->>MCP: quality score
-        MCP-->>CLAUDE: quality score
-        CLAUDE-->>U: ✅ Done! Quality: 98/100
+        Note over U,QUAL: Agent Path: MCP
+        U->>AGENTS: "Generate 10k test rows"
+        AGENTS->>SDK: generate_synthetic_data(rows=10k)
+        SDK->>U: output written
+        AGENTS->>SDK: run_quality_check()
+        SDK-->>AGENTS: quality score
+        AGENTS-->>U: Quality: 98/100
     end
 
     style U fill:#e94560,stroke:#fff,color:#fff
-    style CLAUDE fill:#533483,stroke:#fff,color:#fff
 ```
 
 ---
@@ -288,7 +196,7 @@ pip install 'ai-data-platform[all]'       # all runtime extras
 | `[postgres]` | `[all]` | PostgreSQL connector via psycopg |
 | `[mysql]` | `[all]` | MySQL connector via pymysql |
 | `[mcp]` | `[all]` | MCP server for AI IDE integrations |
-| `[dev]` | — | Testing, linting, type checking, packaging |
+| `[dev]` | - | Testing, linting, type checking, packaging |
 
 ---
 
@@ -301,7 +209,6 @@ adp init --name my-project
 
 # 2. Connect your data source
 adp connect --name my-db --type csv --path ./data
-#                    ── or ──
 #                    --type postgres --dsn "postgresql+psycopg://user:${PASSWORD}@host/db"
 #                    --type duckdb  --path ./data.duckdb
 
@@ -330,7 +237,7 @@ adp generate-data --rows 50000
 
 ## Generate without writing code
 
-`adp apply-spec spec.yaml` generates data purely from a YAML declaration — no source data needed. Define tables, columns, distributions, and FKs declaratively:
+`adp apply-spec spec.yaml` generates data purely from a YAML declaration - no source data needed. Define tables, columns, distributions, and FKs declaratively:
 
 ```yaml
 version: 1
@@ -405,7 +312,7 @@ claude mcp add adp -- adp mcp-server --project /path/to/your/project
 | `run_quality_check` | Score and validate generated data |
 | `search_metadata` | Search catalog for tables/columns |
 | `get_table_schema` | Get table column details |
-| `generate_sql` | NL → read-only SQL |
+| `generate_sql` | NL to read-only SQL |
 | `create_semantic_model` | Build Cube.js semantic model |
 | `generate_docs` | Markdown data dictionary |
 
@@ -437,25 +344,25 @@ print(model["rendered"])  # Cube.js YAML
 
 | Command | What it does |
 |---|---|
-| `adp init` | Create `adp.yaml` and `.adp/` catalog directory |
+| `adp init` | Create adp.yaml and .adp/ catalog directory |
 | `adp connect` | Add a data source (csv, parquet, duckdb, postgres, mysql) |
 | `adp scan` | Discover tables, columns, and FK candidates |
 | `adp profile` | Compute stats, detect PII, confirm PKs/FKs |
-| `adp apply-spec` | Register a declarative YAML spec — no source data needed |
+| `adp apply-spec` | Register a declarative YAML spec - no source data needed |
 | `adp generate-data` | Generate synthetic data (csv / parquet / duckdb / sql) |
 | `adp quality-check` | Run auto-derived checks and print weighted quality score |
 | `adp semantic-model` | Build a Cube.js or generic semantic model as YAML |
 | `adp sql "question"` | Convert natural language to read-only SQL |
 | `adp docs` | Generate a Markdown data dictionary |
 | `adp tables --search` | Search the catalog |
-| `adp ui` | Start the local web console at `http://127.0.0.1:8765` |
+| `adp ui` | Start the local web console at http://127.0.0.1:8765 |
 | `adp mcp-server` | Start the MCP server (stdio) for AI IDE integration |
 
 ---
 
-## AI Provider for NL→SQL
+## AI Provider for NL-to-SQL
 
-NL→SQL uses a configurable model provider. Set your API key in the environment:
+NL-to-SQL uses a configurable model provider. Set your API key in the environment:
 
 ```bash
 export MINIMAX_API_KEY=your_key_here    # default
@@ -483,7 +390,7 @@ model_provider:
 sources:
   - name: csv_files
     type: csv
-    path: ./data                      # file or directory of CSVs
+    path: ./data
 
   - name: parquet_files
     type: parquet
@@ -503,7 +410,7 @@ sources:
     dsn: "mysql+pymysql://user:${MYSQL_PASSWORD}@host:3306/app"
 ```
 
-Secrets use `${ENV_VAR}` interpolation — plaintext secrets in `adp.yaml` are rejected at load.
+Secrets use `${ENV_VAR}` interpolation - plaintext secrets in adp.yaml are rejected at load.
 
 ---
 
@@ -533,8 +440,6 @@ adp quality-check
 
 ### Healthcare (5 tables, 159 columns, 212 checks, 100/100 quality)
 
-Declarative spec at `examples/healthcare/` — no source data needed:
-
 ```bash
 cd examples/healthcare
 adp apply-spec spec.yaml
@@ -561,14 +466,14 @@ mypy src        # type check
 
 ## Publishing
 
-**PyPI Trusted Publishing (OIDC)** — no API tokens needed.
+**PyPI Trusted Publishing (OIDC)** - no API tokens needed.
 
 ```bash
 # Release candidate to TestPyPI
 git tag v0.2.0rc1 && git push origin v0.2.0rc1
 
-# Full release → PyPI (triggered by GitHub Release)
-# 1. Create release on GitHub → publishes to PyPI automatically
+# Full release to PyPI (triggered by GitHub Release)
+# 1. Create release on GitHub -> publishes to PyPI automatically
 ```
 
 See [`.github/workflows/publish.yml`](./.github/workflows/publish.yml) for the full CI/CD pipeline.
@@ -578,7 +483,7 @@ See [`.github/workflows/publish.yml`](./.github/workflows/publish.yml) for the f
 ## Contributing
 
 Issues and PRs welcome. Ground rules:
-- No hardcoded domain logic — everything derives from metadata
+- No hardcoded domain logic - everything derives from metadata
 - Every PR includes tests
 - Secrets never in code or config
 - Sign off commits (DCO)
@@ -587,4 +492,4 @@ Issues and PRs welcome. Ground rules:
 
 ## License
 
-Apache-2.0 — see [LICENSE](./LICENSE).
+Apache-2.0 - see [LICENSE](./LICENSE).

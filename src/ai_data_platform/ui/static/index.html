@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ai-data-platform</title>
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --text:#e6e8ee; --dim:#9aa3b2;
+          --accent:#5b8cff; --ok:#3fb970; --bad:#e5534b; --border:#2a2f3a; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI",
+         Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:16px 24px; border-bottom:1px solid var(--border);
+           display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:16px; margin:0; }
+  header small { color:var(--dim); }
+  main { max-width:1100px; margin:0 auto; padding:24px; display:grid; gap:16px; }
+  section { background:var(--panel); border:1px solid var(--border);
+            border-radius:8px; padding:16px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em;
+       color:var(--dim); margin:0 0 12px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:6px;
+           padding:8px 14px; cursor:pointer; font-weight:600; }
+  button.secondary { background:transparent; border:1px solid var(--border);
+                     color:var(--text); }
+  button:disabled { opacity:.5; cursor:wait; }
+  input, select { background:#0c0e12; color:var(--text); border:1px solid var(--border);
+                  border-radius:6px; padding:8px 10px; width:100%; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .row > * { flex:0 0 auto; }
+  .row input[type=text] { flex:1 1 240px; }
+  table { border-collapse:collapse; width:100%; margin-top:12px; }
+  th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--border);
+           font-size:13px; }
+  th { color:var(--dim); font-weight:600; }
+  pre { background:#0c0e12; border:1px solid var(--border); border-radius:6px;
+        padding:12px; overflow:auto; max-height:320px; white-space:pre-wrap; }
+  .score { font-size:28px; font-weight:700; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); }
+  .empty { color:var(--dim); font-style:italic; }
+  #toast { position:fixed; bottom:20px; right:20px; background:var(--panel);
+           border:1px solid var(--border); padding:10px 16px; border-radius:8px;
+           display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ai-data-platform</h1>
+  <small id="version">connecting…</small>
+</header>
+<main>
+  <section>
+    <h2>Catalog</h2>
+    <div class="row">
+      <button id="btn-scan">Scan sources</button>
+      <button id="btn-profile" class="secondary">Profile</button>
+      <input type="text" id="search" placeholder="Search tables and columns…">
+    </div>
+    <div id="tables"><p class="empty">No metadata yet — connect a source with
+      <code>adp connect</code>, then scan.</p></div>
+  </section>
+
+  <section>
+    <h2>Synthetic data</h2>
+    <div class="row">
+      <label>Rows <input type="number" id="rows" value="1000" min="1" style="width:110px"></label>
+      <label>Format
+        <select id="fmt">
+          <option>parquet</option><option>csv</option><option>duckdb</option><option>sql</option>
+        </select>
+      </label>
+      <button id="btn-generate">Generate</button>
+      <button id="btn-quality" class="secondary">Quality check</button>
+    </div>
+    <div id="genout"></div>
+    <div id="quality"></div>
+  </section>
+
+  <section>
+    <h2>Semantic model</h2>
+    <div class="row">
+      <select id="semfmt" style="width:140px"><option>generic</option><option>cube</option></select>
+      <button id="btn-semantic">Build model</button>
+    </div>
+    <pre id="semout" style="display:none"></pre>
+  </section>
+
+  <section>
+    <h2>Ask your data (AI SQL)</h2>
+    <div class="row">
+      <input type="text" id="question" placeholder="e.g. total orders per customer last month">
+      <button id="btn-sql">Generate SQL</button>
+    </div>
+    <pre id="sqlout" style="display:none"></pre>
+  </section>
+</main>
+<div id="toast"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const toast = (msg, bad=false) => {
+  const t = $("toast"); t.textContent = msg; t.style.display = "block";
+  t.style.borderColor = bad ? "var(--bad)" : "var(--ok)";
+  setTimeout(() => t.style.display = "none", 4000);
+};
+async function api(path, opts={}) {
+  const res = await fetch(path, {headers:{"Content-Type":"application/json"}, ...opts});
+  if (!res.ok) { const d = await res.json().catch(()=>({detail:res.statusText}));
+    throw new Error(d.detail || res.statusText); }
+  return res.json();
+}
+function busy(btn, on) { btn.disabled = on; }
+function renderTables(rows) {
+  if (!rows.length) { $("tables").innerHTML =
+    '<p class="empty">Catalog is empty. Run a scan.</p>'; return; }
+  const cols = Object.keys(rows[0]);
+  $("tables").innerHTML = "<table><tr>" + cols.map(c=>`<th>${c}</th>`).join("") +
+    "</tr>" + rows.map(r => "<tr>" + cols.map(c =>
+      `<td>${r[c] ?? "—"}</td>`).join("") + "</tr>").join("") + "</table>";
+}
+async function loadTables() {
+  try { renderTables(await api("/metadata/tables")); } catch(e) {}
+}
+$("btn-scan").onclick = async (ev) => { busy(ev.target, true);
+  try { await api("/scan", {method:"POST"}); toast("Scan complete"); await loadTables(); }
+  catch(e){ toast(e.message, true); } finally { busy(ev.target, false); } };
+$("btn-profile").onclick = async (ev) => { busy(ev.target, true);
+  try { await api("/profile/run", {method:"POST", body:"{}"}); toast("Profiling complete");
+    await loadTables(); }
+  catch(e){ toast(e.message, true); } finally { busy(ev.target, false); } };
+$("search").oninput = async (ev) => {
+  const q = ev.target.value.trim();
+  if (!q) return loadTables();
+  try { renderTables(await api("/metadata/search?q=" + encodeURIComponent(q))); } catch(e) {}
+};
+$("btn-generate").onclick = async (ev) => { busy(ev.target, true);
+  try {
+    const r = await api("/generate-data", {method:"POST",
+      body: JSON.stringify({rows:+$("rows").value, output_format:$("fmt").value})});
+    $("genout").innerHTML = "<table><tr><th>table</th><th>rows</th><th>path</th></tr>" +
+      Object.entries(r.tables).map(([t,i]) =>
+        `<tr><td>${t}</td><td>${i.rows}</td><td>${i.path}</td></tr>`).join("") + "</table>";
+    toast("Generation complete (seed " + r.seed + ")");
+  } catch(e){ toast(e.message, true); } finally { busy(ev.target, false); } };
+$("btn-quality").onclick = async (ev) => { busy(ev.target, true);
+  try {
+    const r = await api("/quality-check", {method:"POST"});
+    const cls = r.quality_score >= 90 ? "ok" : "bad";
+    $("quality").innerHTML = `<p>Quality score:
+      <span class="score ${cls}">${r.quality_score}</span>/100</p>` +
+      Object.entries(r.category_scores).map(([c,v])=>`<span>${c}: ${v}&nbsp;&nbsp;</span>`).join("");
+  } catch(e){ toast(e.message, true); } finally { busy(ev.target, false); } };
+$("btn-semantic").onclick = async (ev) => { busy(ev.target, true);
+  try {
+    const r = await api("/semantic-model", {method:"POST",
+      body: JSON.stringify({format:$("semfmt").value})});
+    $("semout").style.display = "block"; $("semout").textContent = r.rendered;
+  } catch(e){ toast(e.message, true); } finally { busy(ev.target, false); } };
+$("btn-sql").onclick = async (ev) => { busy(ev.target, true);
+  try {
+    const r = await api("/sql", {method:"POST",
+      body: JSON.stringify({question:$("question").value})});
+    $("sqlout").style.display = "block";
+    $("sqlout").textContent = r.sql + "\n\n-- " + r.explanation +
+      "\n-- confidence: " + r.confidence;
+  } catch(e){ toast(e.message, true); } finally { busy(ev.target, false); } };
+(async () => {
+  try { const h = await api("/health"); $("version").textContent = "v" + h.version;
+    await loadTables(); }
+  catch(e) { $("version").textContent = "API unreachable"; }
+})();
+</script>
+</body>
+</html>

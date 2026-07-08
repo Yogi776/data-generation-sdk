@@ -1,0 +1,210 @@
+"""ADPClient: the Python SDK and the single backend behind CLI, API, and MCP.
+
+"One backend, many faces": every interface calls these use cases; none of them
+reimplements logic.
+
+Example:
+    from ai_data_platform import ADPClient
+
+    client = ADPClient(project_path=".")
+    client.scan()
+    client.profile()
+    client.generate_data(rows=10_000)
+    client.create_semantic_model()
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import polars as pl
+
+from ai_data_platform.config import (
+    ProjectConfig,
+    SourceConfig,
+    default_config,
+    load_config,
+    save_config,
+)
+from ai_data_platform.core.exceptions import GenerationError
+from ai_data_platform.core.paths import safe_resolve
+from ai_data_platform.metadata.catalog import Catalog
+
+
+class ADPClient:
+    """Facade over all platform use cases, rooted at a project directory."""
+
+    def __init__(self, project_path: str | Path = ".") -> None:
+        self.root = Path(project_path).expanduser().resolve()
+        self._catalog: Catalog | None = None
+
+    # -- lazy internals ------------------------------------------------------
+    @property
+    def config(self) -> ProjectConfig:
+        return load_config(self.root)
+
+    @property
+    def catalog(self) -> Catalog:
+        if self._catalog is None:
+            self._catalog = Catalog(self.root)
+        return self._catalog
+
+    # -- project -------------------------------------------------------------
+    def init(self, project_name: str | None = None, *, force: bool = False) -> Path:
+        """Create adp.yaml (and .adp/) in the project directory."""
+        from ai_data_platform.config import config_path
+
+        path = config_path(self.root)
+        if path.exists() and not force:
+            from ai_data_platform.core.exceptions import ConfigError
+
+            raise ConfigError(
+                f"{path} already exists.", hint="Use force=True / --force to overwrite."
+            )
+        cfg = default_config(project_name or self.root.name)
+        self.root.mkdir(parents=True, exist_ok=True)
+        return save_config(cfg, self.root)
+
+    def add_source(self, source: SourceConfig, *, test: bool = True) -> dict[str, Any]:
+        """Add (or replace) a source in adp.yaml; optionally test the connection."""
+        cfg = self.config
+        cfg.sources = [s for s in cfg.sources if s.name != source.name] + [source]
+        result: dict[str, Any] = {"name": source.name, "type": source.type}
+        if test:
+            from ai_data_platform.connectors import get_connector
+
+            check = get_connector(source).test_connection()
+            result.update(ok=check.ok, message=check.message)
+            if not check.ok:
+                return result  # do not persist a broken source
+        save_config(cfg, self.root)
+        result.setdefault("ok", True)
+        return result
+
+    def apply_spec(self, spec_path: str | Path) -> dict[str, Any]:
+        """Apply a declarative dataset spec (YAML) — generate without seed data."""
+        from ai_data_platform.spec import apply_spec, load_spec
+
+        return apply_spec(self.catalog, load_spec(safe_resolve(self.root, spec_path)))
+
+    def propose_spec(self, description: str, research_notes: str = "") -> dict[str, Any]:
+        """AI-draft a validated dataset spec from a description (+ optional
+        research notes with real-world distributions). Does not apply it."""
+        from ai_data_platform.spec import propose_spec
+
+        yaml_text, spec = propose_spec(self.config.model_provider, description, research_notes)
+        return {
+            "yaml": yaml_text,
+            "tables": [t.name for t in spec.tables],
+            "columns": sum(len(t.columns) for t in spec.tables),
+        }
+
+    # -- metadata --------------------------------------------------------------
+    def scan(self, source: str | None = None) -> list[dict[str, Any]]:
+        from ai_data_platform.metadata.scan import scan_all, scan_source
+
+        if source:
+            return [scan_source(self.config, self.catalog, source)]
+        return scan_all(self.config, self.catalog)
+
+    def profile(self, source: str | None = None, sample_rows: int = 10_000) -> list[dict[str, Any]]:
+        from ai_data_platform.profiler.profiler import profile_source
+
+        cfg = self.config
+        names = [source] if source else [s.name for s in cfg.sources]
+        out: list[dict[str, Any]] = []
+        for name in names:
+            out += profile_source(cfg, self.catalog, name, sample_rows=sample_rows)
+        return out
+
+    def list_tables(self, source: str | None = None) -> list[dict[str, Any]]:
+        return self.catalog.list_tables(source)
+
+    def get_table(self, table: str) -> dict[str, Any]:
+        return self.catalog.get_table(table)
+
+    def search_metadata(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+        return self.catalog.search(query, limit)
+
+    # -- generation ---------------------------------------------------------------
+    def build_plan(
+        self,
+        rows: int | None = None,
+        tables: list[str] | None = None,
+        seed: int | None = None,
+        rows_per_table: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        from ai_data_platform.generator.engine import build_plan
+
+        gen = self.config.generation
+        plan = build_plan(
+            self.catalog,
+            rows=rows or gen.default_rows,
+            seed=seed if seed is not None else gen.seed,
+            tables=tables,
+            rows_per_table=rows_per_table,
+            chunk_rows=gen.chunk_rows,
+        )
+        return plan.model_dump()
+
+    def generate_data(
+        self,
+        rows: int | None = None,
+        *,
+        tables: list[str] | None = None,
+        seed: int | None = None,
+        rows_per_table: dict[str, int] | None = None,
+        output_format: str | None = None,
+        output_dir: str | None = None,
+    ) -> dict[str, Any]:
+        from ai_data_platform.generator.engine import GenerationPlan, generate
+
+        cfg = self.config
+        plan = GenerationPlan.model_validate(self.build_plan(rows, tables, seed, rows_per_table))
+        out_dir = safe_resolve(self.root, output_dir or cfg.output_dir)
+        fmt = output_format or cfg.generation.output_format
+        results = generate(plan, out_dir, output_format=fmt)
+        return {"seed": plan.seed, "format": fmt, "tables": results}
+
+    # -- quality ---------------------------------------------------------------------
+    def quality_check(self, data_dir: str | None = None) -> dict[str, Any]:
+        """Run derived checks against generated outputs (default) or a data dir."""
+        from ai_data_platform.quality.checks import run_quality_checks
+
+        cfg = self.config
+        target = safe_resolve(self.root, data_dir or cfg.output_dir)
+        data: dict[str, pl.DataFrame] = {}
+        known = {t["table"] for t in self.catalog.list_tables()}
+        for f in sorted(target.glob("*.parquet")):
+            if f.stem in known:
+                data[f.stem] = pl.read_parquet(f)
+        for f in sorted(target.glob("*.csv")):
+            if f.stem in known and f.stem not in data:
+                data[f.stem] = pl.read_csv(f, try_parse_dates=True)
+        if not data:
+            raise GenerationError(
+                f"No generated csv/parquet files matching catalog tables in {target}.",
+                hint="Run `adp generate-data` first, or pass data_dir.",
+            )
+        return run_quality_checks(self.catalog, data)
+
+    # -- semantic / sql / docs ----------------------------------------------------------
+    def create_semantic_model(
+        self, name: str = "default", fmt: str | None = None
+    ) -> dict[str, Any]:
+        from ai_data_platform.semantic.builder import build_semantic_model, render_semantic_model
+
+        model = build_semantic_model(self.catalog, name)
+        rendered = render_semantic_model(model, fmt or self.config.semantic.format)
+        return {"model": model, "rendered": rendered, "format": fmt or self.config.semantic.format}
+
+    def generate_sql(self, question: str) -> dict[str, Any]:
+        from ai_data_platform.sql.assistant import SQLAssistant
+
+        return SQLAssistant(self.catalog, self.config.model_provider).generate_sql(question)
+
+    def generate_docs(self) -> str:
+        from ai_data_platform.docs.generator import generate_docs
+
+        return generate_docs(self.catalog, self.config.project)

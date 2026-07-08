@@ -1,0 +1,22 @@
+services:
+  adp:
+    build: .
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - ./:/work            # your project directory (adp.yaml, data, output)
+    environment:
+      - MINIMAX_API_KEY=${MINIMAX_API_KEY:-}
+    # docker compose run adp init / connect / scan … also works:
+    #   docker compose run --rm adp scan
+
+  # Optional: Cube.js semantic layer over generated models (adp semantic-model --format cube)
+  cube:
+    image: cubejs/cube:latest
+    profiles: ["semantic"]
+    ports:
+      - "127.0.0.1:4000:4000"
+    volumes:
+      - ./model:/cube/conf/model
+    environment:
+      - CUBEJS_DEV_MODE=true

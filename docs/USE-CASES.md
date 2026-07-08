@@ -10,11 +10,9 @@ For a runnable step-by-step tutorial covering all paths, see [GETTING-STARTED.md
 
 | Example | Tables | Columns | Domain | Best path |
 |---|---|---|---|---|
-| [product-transactions](examples/product-transactions/) | 3 | ~10 | E-commerce | A — spec-only |
-| [shop](examples/shop/) | 2 | ~8 | Retail | B — CSV |
 | [customer-transaction](examples/customer-transaction/) | 2 (+ KYC) | 98 | CRM | A or B |
-| [healthcare](examples/healthcare/) | 5 | 159 | Healthcare | A — spec-only |
 | [retail-ecommerce](examples/retail-ecommerce/) | 4 | ~30 | E-commerce | B — CSV |
+| [healthcare-claims](https://github.com/Yogi776/data-generation-sdk/tree/main/healthcare-claims) | 5 | 159 | Healthcare | A — spec-only |
 | [retail/](../retail/) (sibling project) | 4 | ~30 | Retail | A — spec-only |
 
 ---
@@ -31,15 +29,16 @@ For a runnable step-by-step tutorial covering all paths, see [GETTING-STARTED.md
 
 ```bash
 adp init --name my-project
-cp ../ai-data-platform/examples/healthcare/spec.yaml .
+# Download the healthcare-claims spec from the GitHub repo or copy from your workspace:
+# https://github.com/Yogi776/data-generation-sdk/blob/main/healthcare-claims/spec.yaml
 adp apply-spec spec.yaml
 adp generate-data --rows 50000 --output parquet
 adp quality-check --report quality.md
 ```
 
-**Example project:** `examples/healthcare` (5 tables, 159 columns, 212 checks, 100/100 quality)
+**Example project:** The [healthcare-claims](https://github.com/Yogi776/data-generation-sdk/tree/main/healthcare-claims) GitHub example (9 tables, 200+ columns).
 
-**Expected outcome:** Zero orphans across all FK chains; distributions match declared weights (e.g., payment UPI ~40%, Delivered ~82%); quality score 100/100.
+**Expected outcome:** Zero orphans across all FK chains; distributions match declared weights (e.g., payment UPI ~40%, Delivered ~82%); quality score ≥ 95.
 
 ---
 
@@ -71,25 +70,24 @@ adp quality-check
 
 **Goal:** Show the platform working end-to-end as fast as possible.
 
-**Best path:** B — CSV (pre-seeded)
+**Best path:** B — CSV (from sample files)
 
-**Prerequisites:** `examples/shop/` has pre-seeded CSVs
+**Prerequisites:** Any CSV files in `./data/` directory
 
 **Commands:**
 
 ```bash
-cd examples/shop
-python make_data.py          # writes data/customers.csv + data/orders.csv
-adp init --name shop-demo
+# Place your CSV files in ./data/ (e.g. customers.csv, orders.csv)
+adp init --name demo-project
 adp connect --name shop --type csv --path ./data
 adp scan && adp profile
 adp generate-data --rows 10000 --output parquet
 adp quality-check
 ```
 
-**Example project:** `examples/shop`
+**Example project:** `examples/customer-transaction` (includes `data/` directory with sample CSVs)
 
-**Expected outcome:** ~2 minutes total; 2 tables (customers, orders); FK `orders.customer_id → customers.customer_id` detected; quality score printed.
+**Expected outcome:** ~2 minutes total; tables detected from CSVs; FK candidates inferred from column names; quality score printed.
 
 ---
 
@@ -148,13 +146,14 @@ adp quality-check
 **Commands:**
 
 ```bash
-cp ../ai-data-platform/examples/healthcare/spec.yaml .
+# Get the healthcare-claims spec from the GitHub repo:
+# https://github.com/Yogi776/data-generation-sdk/blob/main/healthcare-claims/spec.yaml
 adp apply-spec spec.yaml
 adp generate-data --rows 50000 --output parquet
 adp quality-check
 ```
 
-**Example project:** `examples/healthcare`
+**Example project:** The [healthcare-claims](https://github.com/Yogi776/data-generation-sdk/tree/main/healthcare-claims) GitHub example demonstrates all three features.
 
 **Key spec features used:**
 
@@ -180,7 +179,7 @@ adp quality-check
   null_unless: order_status = 'Returned'
 ```
 
-**Expected outcome:** 5 tables, 159 columns, 212 checks, 100/100 quality; temporal ordering 100% valid; city-state consistency across all rows.
+**Expected outcome:** 5+ tables, 150+ columns, quality score ≥ 95; temporal ordering 100% valid; city-state consistency across all rows.
 
 ---
 
@@ -190,20 +189,20 @@ adp quality-check
 
 **Best path:** A — spec-only (or B from CSV)
 
-**Prerequisites:** `adp init`; spec at `../retail/spec.yaml`
+**Prerequisites:** `adp init`; spec at `../../retail/spec.yaml` (relative from `docs/`)
 
 **Commands:**
 
 ```bash
 mkdir retail-project && cd retail-project
 adp init --name retail-project
-cp ../retail/spec.yaml .
+cp ../../retail/spec.yaml .
 adp apply-spec spec.yaml
 adp generate-data --rows 50000 --output csv
 adp quality-check
 ```
 
-**Example project:** `../retail/` (sibling workspace project — same schema, pre-validated)
+**Example project:** `../../retail/` (sibling workspace project — same schema, pre-validated)
 
 **Schema structure:**
 ```
@@ -239,7 +238,7 @@ Tool sequence: `scan_sources` → `profile_source` → `generate_synthetic_data`
 
 **Expected outcome:** Agent reports quality score and per-table check results; generated files in `output/`; agent can follow up with `preview_data` to show sample rows.
 
-See [MCP-GUIDE.md](MCP-GUIDE.md) for all 26 available MCP tools and 4 recommended agent flows.
+See [MCP-GUIDE.md](MCP-GUIDE.md) for all 25 available MCP tools and 4 recommended agent flows.
 
 ---
 
@@ -468,7 +467,7 @@ tables = client.list_explorer_tables()
 df = client.execute_explorer_sql("SELECT * FROM customers LIMIT 5")
 ```
 
-**Example project:** `examples/README.md` § SDK
+**Example project:** `examples/customer-transaction/` (includes CSV sample data and adp.yaml)
 
 **Expected outcome:** Full pipeline controllable programmatically; results returned as dicts; Explorer accessible via SDK.
 

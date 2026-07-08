@@ -82,6 +82,9 @@ path = "src/ai_data_platform/__about__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ai_data_platform"]
+# Include agent_skills data files (SKILL.md, JSON templates) in the wheel.
+# agent_skills has no __init__.py so hatch needs explicit inclusion.
+include = ["src/ai_data_platform/agent_skills"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src", "tests", "examples", "README.md", "LICENSE"]

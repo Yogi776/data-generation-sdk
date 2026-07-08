@@ -79,3 +79,70 @@ jobs:
           sleep 60  # index propagation
           pip install ai-data-platform
           adp version
+
+  update-homebrew-tap:
+    if: github.event_name == 'release'
+    needs: post-publish-smoke
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Wait for PyPI propagation
+        run: sleep 90
+
+      - name: Extract version from tag
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          echo "VERSION=${VERSION#v}" >> $GITHUB_ENV
+          echo "Tag: $VERSION"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install formula generator dependencies
+        run: pip install homebrew-pypi-poet
+
+      - name: Generate formula
+        working-directory: packaging/homebrew
+        run: |
+          python generate_formula.py --version "${{ env.VERSION }}" --dry-run > /tmp/formula.rb
+          echo "=== Generated formula (first 40 lines) ==="
+          head -40 /tmp/formula.rb
+          ruby -c /tmp/formula.rb
+
+      - name: Clone homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: Yogi776/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+          sparse-checkout: |
+            Formula
+          sparse-checkout-cone-mode: false
+
+      - name: Write formula
+        run: |
+          python packaging/homebrew/generate_formula.py \
+            --version "${{ env.VERSION }}" \
+            --output homebrew-tap/Formula/ai-data-platform.rb
+
+      - name: Commit and push
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/ai-data-platform.rb
+          git diff --staged --quiet \
+            && { echo "No changes — formula unchanged"; exit 0; }
+          git commit -m "ai-data-platform ${{ env.VERSION }}"
+          git push origin main
+
+      - name: Trigger tap CI
+        run: |
+          curl -s -X POST \
+            -H "Authorization: token ${{ secrets.HOMEBREW_TAP_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/Yogi776/homebrew-tap/dispatches \
+            -d '{"event_type":"formula-updated"}'

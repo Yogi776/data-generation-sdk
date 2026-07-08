@@ -55,6 +55,14 @@ jobs:
           /tmp/smoke/bin/pip install dist/*.whl
           /tmp/smoke/bin/adp version
           /tmp/smoke/bin/python -c "import ai_data_platform; print(ai_data_platform.__version__)"
+          /tmp/smoke/bin/python -c "
+import importlib.metadata as m
+eps = list(m.entry_points(group='console_scripts'))
+adp_ep = [e for e in eps if e.name == 'adp']
+assert adp_ep, 'adp console_scripts entry point not found'
+assert adp_ep[0].value == 'ai_data_platform.cli:app', f'Wrong entry point: {adp_ep[0].value}'
+print('Entry point OK:', adp_ep[0].value)
+"
       - uses: actions/upload-artifact@v4
         with:
           name: dist

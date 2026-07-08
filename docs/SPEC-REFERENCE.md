@@ -508,8 +508,7 @@ tables:
 
 | Example | Path | Highlights |
 |---|---|---|
-| [examples/product-transactions/spec.yaml](../examples/product-transactions/spec.yaml) | A | Minimal 3-table spec |
 | [examples/customer-transaction/spec.yaml](../examples/customer-transaction/spec.yaml) | A | 98 columns, all features |
-| [examples/healthcare/spec.yaml](../examples/healthcare/spec.yaml) | A | 5 tables, temporal/hierarchy |
-| [retail/spec.yaml](../../retail/spec.yaml) | A | 4-table retail star schema |
 | [cursor-test/spec.yaml](../cursor-test/spec.yaml) | A | MCP test harness; same as customer-transaction |
+| [healthcare-claims/spec.yaml](https://github.com/Yogi776/data-generation-sdk/blob/main/healthcare-claims/spec.yaml) | A | 5+ tables, temporal/hierarchy rules |
+| [retail/spec.yaml](../../retail/spec.yaml) | A | 4-table retail star schema |

@@ -110,7 +110,17 @@ class ADPClient:
         """Apply a declarative dataset spec (YAML) — generate without seed data."""
         from ai_data_platform.spec import apply_spec, load_spec
 
-        return apply_spec(self.catalog, load_spec(safe_resolve(self.root, spec_path)))
+        gen = self.config.generation
+        calendar_defaults = {
+            "fiscal_year_start_month": gen.fiscal_year_start_month,
+            "hemisphere": gen.hemisphere,
+            "country": gen.holiday_country,
+        }
+        return apply_spec(
+            self.catalog,
+            load_spec(safe_resolve(self.root, spec_path)),
+            calendar_defaults=calendar_defaults,
+        )
 
     def propose_spec(self, description: str, research_notes: str = "") -> dict[str, Any]:
         """AI-draft a validated dataset spec from a description (+ optional
@@ -188,6 +198,32 @@ class ADPClient:
         plan = self.build_plan(rows, tables, seed, rows_per_table)
         return safe_write_text(self.root, path, json.dumps(plan, indent=2) + "\n")
 
+    def analyze_complexity(
+        self, rows: int | None = None, tables: list[str] | None = None, seed: int | None = None
+    ) -> dict[str, Any]:
+        """Static complexity analysis of the plan: per-column cost classes, a
+        module complexity table, and hot-spot warnings. No generation."""
+        from ai_data_platform.generator.engine import GenerationPlan
+        from ai_data_platform.optimizer import analyze_complexity
+
+        plan = GenerationPlan.model_validate(self.build_plan(rows, tables, seed))
+        return analyze_complexity(plan)
+
+    def plan_execution(
+        self,
+        rows: int | None = None,
+        tables: list[str] | None = None,
+        seed: int | None = None,
+        memory_budget_mb: float | None = None,
+    ) -> dict[str, Any]:
+        """Execution plan for a run: batch size, parallelism, format, partitioning,
+        memory estimate, runtime class, and optimization warnings. No generation."""
+        from ai_data_platform.generator.engine import GenerationPlan
+        from ai_data_platform.optimizer import plan_execution
+
+        plan = GenerationPlan.model_validate(self.build_plan(rows, tables, seed))
+        return plan_execution(plan, self.config.generation, memory_budget_mb=memory_budget_mb)
+
     def generate_data(
         self,
         rows: int | None = None,
@@ -199,6 +235,7 @@ class ADPClient:
         output_dir: str | None = None,
         dataset: str = "default",
         register: bool | None = None,
+        optimized: bool = False,
     ) -> dict[str, Any]:
         from ai_data_platform.generator.engine import GenerationPlan
         from ai_data_platform.generator.executor_dispatch import dispatch_generate
@@ -208,6 +245,15 @@ class ADPClient:
         rel_dir = output_dir or cfg.output_dir
         out_dir = safe_resolve(self.root, rel_dir)
         fmt = output_format or cfg.generation.output_format
+        # apply execution-plan recommendations (batch size, parallelism, format)
+        if optimized:
+            from ai_data_platform.optimizer import plan_execution
+
+            ep = plan_execution(plan, cfg.generation)
+            plan.chunk_rows = int(ep["recommended_batch_size"])
+            cfg.generation.parallel_workers = int(ep["parallelism"])
+            if output_format is None:
+                fmt = ep["recommended_format"]
         results = dispatch_generate(
             plan, out_dir, output_format=fmt, cfg=cfg.generation
         )
@@ -242,6 +288,93 @@ class ADPClient:
         cfg = self.config
         target = safe_resolve(self.root, data_dir or cfg.output_dir)
         return run_quality_checks_on_dir(self.catalog, target)
+
+    def load_data(
+        self,
+        *,
+        destination: str | None = None,
+        tables: list[str] | None = None,
+        data_dir: str | None = None,
+        dry_run: bool = False,
+        skip_quality: bool = False,
+        force_quality: bool = False,
+    ) -> dict[str, Any]:
+        """Push generated staging files to a configured warehouse via ingestr."""
+        from ai_data_platform.load.engine import LoadEngine
+
+        report = LoadEngine(self.root, self.catalog, self.config).load(
+            destination=destination,
+            tables=tables,
+            data_dir=data_dir,
+            dry_run=dry_run,
+            skip_quality=skip_quality,
+            force_quality=force_quality,
+        )
+        return {
+            "destination": report.destination,
+            "staging_format": report.staging_format,
+            "quality_score": report.quality_score,
+            "elapsed_ms": report.elapsed_ms,
+            "ok": report.ok,
+            "tables": [
+                {
+                    "table": t.table,
+                    "dest_table": t.dest_table,
+                    "status": t.status,
+                    "elapsed_ms": t.elapsed_ms,
+                    "error": t.error,
+                }
+                for t in report.tables
+            ],
+        }
+
+    # -- seasonality ----------------------------------------------------------------
+    def preview_seasonality(self, table: str) -> dict[str, Any]:
+        """Inspect a table's seasonality config and its expected factor curve.
+
+        Read-only — no generation. Returns the anchor, factor config, and a
+        downsampled expected daily-intensity curve for charting.
+        """
+        from ai_data_platform.core.exceptions import ConfigError
+        from ai_data_platform.generator.seasonality import (
+            _range_dates,
+            _to_date,
+            build_day_weights,
+        )
+
+        profile = self.catalog.get_latest_profile(table) or {}
+        anchor: str | None = None
+        factor: dict[str, Any] = {}
+        for c in profile.get("columns", []):
+            if c.get("seasonality"):
+                anchor = c["name"]
+                factor = c["seasonality"].get("factor", {}) or {}
+                break
+        if anchor is None:
+            raise ConfigError(
+                f"Table {table!r} has no seasonality block.",
+                hint="Add a `seasonality:` block to the table in your spec.",
+            )
+        start = _to_date(factor.get("_start", "2024-01-01"))
+        end = _to_date(factor.get("_end", "2026-01-01"))
+        days = _range_dates(start, end)
+        weights = build_day_weights(start, end, factor)
+        step = max(1, len(days) // 120)  # downsample to <=120 points
+        curve = [
+            {"date": days[i].isoformat(), "intensity": round(float(weights[i]), 8)}
+            for i in range(0, len(days), step)
+        ]
+        return {"table": table, "anchor": anchor, "factor": factor, "days": len(days), "curve": curve}
+
+    def seasonality_check(
+        self, data_dir: str | None = None, tables: list[str] | None = None
+    ) -> dict[str, Any]:
+        """Validate generated data against the declared seasonality (volume peaks,
+        weekly pattern, trend, expected/observed correlation, cross-table alignment)."""
+        from ai_data_platform.quality.seasonality_report import build_seasonality_report
+
+        target = safe_resolve(self.root, data_dir or self.config.output_dir)
+        return build_seasonality_report(self.catalog, target, tables=tables)
 
     # -- semantic / sql / docs ----------------------------------------------------------
     def create_semantic_model(

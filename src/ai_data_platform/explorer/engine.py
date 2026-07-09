@@ -101,7 +101,7 @@ class DuckDBExplorer:
         return {"table": table, "row_count": int(row[0]) if row else 0}
 
     def profile_table(self, dataset: str, table: str) -> dict[str, Any]:
-        meta = self._resolve_table(dataset, table)
+        self._resolve_table(dataset, table)  # validates existence
         ident = quote_ident(table)
         with self._connect(dataset) as con:
             total_row = con.execute(f"SELECT count(*) FROM {ident}").fetchone()  # noqa: S608
@@ -114,9 +114,11 @@ class DuckDBExplorer:
             )
             base = max(1, min(total, _PROFILE_SAMPLE_ROWS) if sampled else total or 1)
 
-            columns: list[dict[str, Any]] = []
-            for col in meta["columns"]:
-                columns.append(self._profile_column(con, src, col, base))
+            # One pass over the (sampled) relation computes null%, approx-distinct,
+            # min/max, avg/std for every column — no per-column fan-out.
+            columns = self._summarize_columns(con, src, base)
+            # Top values only for the handful of low-cardinality columns.
+            self._attach_top_values(con, src, columns)
         return {
             "table": table,
             "row_count": total,
@@ -124,61 +126,53 @@ class DuckDBExplorer:
             "columns": columns,
         }
 
-    def _profile_column(
-        self,
-        con: duckdb.DuckDBPyConnection,
-        src: str,
-        col: dict[str, Any],
-        base_rows: int,
-    ) -> dict[str, Any]:
-        name = col["name"]
-        ident = quote_ident(name)
-        dtype = str(col["type"]).upper()
-        numeric = any(k in dtype for k in ("INT", "DECIMAL", "DOUBLE", "FLOAT", "REAL", "HUGEINT"))
-        temporal = any(k in dtype for k in ("DATE", "TIME", "TIMESTAMP"))
+    def _summarize_columns(
+        self, con: duckdb.DuckDBPyConnection, src: str, base_rows: int
+    ) -> list[dict[str, Any]]:
+        rel = con.execute(f"SUMMARIZE SELECT * FROM {src}")  # noqa: S608 - ident/subquery are internal
+        idx = {c[0]: i for i, c in enumerate(rel.description)}
+        rows = rel.fetchall()
 
-        row = con.execute(
-            f"SELECT count(*) - count({ident}), count(DISTINCT {ident}) FROM {src}"  # noqa: S608
-        ).fetchone()
-        nulls = int(row[0]) if row else 0
-        distinct = int(row[1]) if row and row[1] is not None else None
-        out: dict[str, Any] = {
-            "column": name,
-            "type": col["type"],
-            "null_count": nulls,
-            "null_fraction": round(nulls / base_rows, 6) if base_rows else 0.0,
-            "distinct": distinct,
-            "min": None,
-            "max": None,
-            "mean": None,
-            "stddev": None,
-            "top_values": [],
-        }
+        def val(r: tuple, key: str) -> Any:
+            return r[idx[key]] if key in idx else None
 
-        if numeric:
-            stat = con.execute(
-                f"SELECT min({ident}), max({ident}), avg({ident}), stddev_samp({ident}) "  # noqa: S608
-                f"FROM {src}"
-            ).fetchone()
-            if stat:
-                out["min"], out["max"] = stat[0], stat[1]
-                out["mean"] = float(stat[2]) if stat[2] is not None else None
-                out["stddev"] = float(stat[3]) if stat[3] is not None else None
-        elif temporal:
-            stat = con.execute(
-                f"SELECT min({ident}), max({ident}) FROM {src}"  # noqa: S608
-            ).fetchone()
-            if stat:
-                out["min"], out["max"] = stat[0], stat[1]
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            dtype = str(val(r, "column_type") or "").upper()
+            numeric = any(
+                k in dtype for k in ("INT", "DECIMAL", "DOUBLE", "FLOAT", "REAL", "HUGEINT")
+            )
+            null_pct = _to_float(val(r, "null_percentage")) or 0.0
+            null_count = int(round(null_pct / 100.0 * base_rows)) if base_rows else 0
+            out.append(
+                {
+                    "column": val(r, "column_name"),
+                    "type": val(r, "column_type"),
+                    "null_count": null_count,
+                    "null_fraction": round(null_pct / 100.0, 6),
+                    "distinct": _to_int(val(r, "approx_unique")),
+                    "min": _coerce(val(r, "min"), numeric),
+                    "max": _coerce(val(r, "max"), numeric),
+                    "mean": _to_float(val(r, "avg")),
+                    "stddev": _to_float(val(r, "std")),
+                    "top_values": [],
+                }
+            )
+        return out
 
-        # Top values for low/medium-cardinality columns.
-        if distinct is not None and 0 < distinct <= 50:
+    def _attach_top_values(
+        self, con: duckdb.DuckDBPyConnection, src: str, columns: list[dict[str, Any]]
+    ) -> None:
+        for col in columns:
+            distinct = col["distinct"]
+            if distinct is None or not (0 < distinct <= 50):
+                continue
+            ident = quote_ident(col["column"])
             top = con.execute(
                 f"SELECT {ident} AS v, count(*) AS c FROM {src} "  # noqa: S608
                 f"WHERE {ident} IS NOT NULL GROUP BY 1 ORDER BY c DESC LIMIT {_TOP_VALUES}"
             ).fetchall()
-            out["top_values"] = [{"value": r[0], "count": int(r[1])} for r in top]
-        return out
+            col["top_values"] = [{"value": r[0], "count": int(r[1])} for r in top]
 
     # -- query ---------------------------------------------------------------
     def execute_sql(self, dataset: str, sql: str, *, max_rows: int | None = None) -> dict[str, Any]:
@@ -302,3 +296,28 @@ def _status_for(e: Exception) -> str:
     if isinstance(e, _U):
         return "rejected"
     return "error"
+
+
+def _to_float(v: Any) -> float | None:
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_int(v: Any) -> int | None:
+    try:
+        return int(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce(v: Any, numeric: bool) -> Any:
+    """SUMMARIZE returns min/max as strings; coerce to float for numeric columns,
+    otherwise leave scalars as-is and stringify complex values."""
+    if v is None:
+        return None
+    if numeric:
+        f = _to_float(v)
+        return f if f is not None else v
+    return v if isinstance(v, (int, float, str, bool)) else str(v)

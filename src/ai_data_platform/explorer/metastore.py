@@ -288,6 +288,29 @@ class ExplorerMetastore:
             ]
             return d
 
+    def list_tables_with_columns(self, dataset: str) -> list[dict[str, Any]]:
+        """All tables in a dataset WITH their columns, in a single session — avoids
+        the N+1 pattern of calling get_table() per table."""
+        with self.session() as s:
+            ds = s.scalar(select(DatasetRecord).where(DatasetRecord.name == dataset))
+            if ds is None:
+                raise DatasetNotFoundError(dataset, self._dataset_names(s))
+            out: list[dict[str, Any]] = []
+            for t in sorted(ds.tables, key=lambda x: x.name):
+                d = self._table_dict(t)
+                d["columns"] = [
+                    {
+                        "name": c.name,
+                        "type": c.data_type,
+                        "nullable": c.nullable,
+                        "primary_key": False,
+                        "pii": None,
+                    }
+                    for c in t.columns
+                ]
+                out.append(d)
+            return out
+
     def db_path_for(self, dataset: str) -> str:
         return self.get_dataset(dataset)["db_path"]
 

@@ -142,11 +142,13 @@ class DatasetRegistrar:
         best_priority: dict[str, int] = {}
 
         # Hive-partitioned directories: subdir named `table` containing key=value/…
+        # Only the FIRST parquet path is needed to detect the layout and keys —
+        # avoid materializing every file under the subtree.
         for child in sorted(target.iterdir()):
             if child.is_dir():
-                parts = list(child.rglob("*.parquet"))
-                if parts and any(_HIVE.search(str(p.relative_to(child))) for p in parts):
-                    keys = self._partition_keys(child, parts)
+                first = next(child.rglob("*.parquet"), None)
+                if first is not None and _HIVE.search(str(first.relative_to(child))):
+                    keys = self._partition_keys(child, first)
                     glob = _sql_str(f"{child}/**/*.parquet")
                     found[child.name] = (
                         "parquet",
@@ -174,11 +176,10 @@ class DatasetRegistrar:
         return found
 
     @staticmethod
-    def _partition_keys(base: Path, parts: list[Path]) -> list[str]:
+    def _partition_keys(base: Path, sample: Path) -> list[str]:
         keys: list[str] = []
-        for p in parts[:1]:
-            for seg in p.relative_to(base).parts:
-                m = _HIVE.fullmatch(seg)
-                if m and m.group(1) not in keys:
-                    keys.append(m.group(1))
+        for seg in sample.relative_to(base).parts:
+            m = _HIVE.fullmatch(seg)
+            if m and m.group(1) not in keys:
+                keys.append(m.group(1))
         return keys

@@ -77,15 +77,15 @@ class InsightAgent:
     def suggest_analytics_queries(
         self, dataset: str, table: str | None = None, limit: int = 8
     ) -> dict[str, Any]:
-        tables = self.metastore.list_tables(dataset)
+        # Single query fetches every table with its columns (no per-table N+1).
+        tables = self.metastore.list_tables_with_columns(dataset)
         by_name = {t["table"]: t for t in tables}
         targets = [by_name[table]] if table and table in by_name else tables
         suggestions: list[dict[str, str]] = []
 
         for t in targets:
-            meta = self.metastore.get_table(dataset, t["table"])
-            suggestions.extend(self._table_suggestions(t["table"], meta["columns"]))
-        suggestions.extend(self._join_suggestions(dataset, tables))
+            suggestions.extend(self._table_suggestions(t["table"], t["columns"]))
+        suggestions.extend(self._join_suggestions(tables))
 
         # De-dup by SQL, cap.
         seen: set[str] = set()
@@ -98,7 +98,7 @@ class InsightAgent:
         unique = unique[:limit]
 
         source = "deterministic"
-        enriched = self._llm_suggestions(dataset, tables)
+        enriched = self._llm_suggestions(tables)
         if enriched:
             for e in enriched:
                 if e["sql"] not in seen:
@@ -165,12 +165,12 @@ class InsightAgent:
             )
         return out
 
-    def _join_suggestions(self, dataset: str, tables: list[dict[str, Any]]) -> list[dict[str, str]]:
-        # Shared id-like columns across tables imply a join key.
+    def _join_suggestions(self, tables: list[dict[str, Any]]) -> list[dict[str, str]]:
+        # Shared id-like columns across tables imply a join key. `tables` already
+        # carries columns (fetched once), so no further metastore reads here.
         col_index: dict[str, list[str]] = {}
         for t in tables:
-            meta = self.metastore.get_table(dataset, t["table"])
-            for c in meta["columns"]:
+            for c in t["columns"]:
                 if _ID_RE.search(c["name"]):
                     col_index.setdefault(c["name"], []).append(t["table"])
         out: list[dict[str, str]] = []
@@ -321,11 +321,11 @@ class InsightAgent:
 
     # -- validation ----------------------------------------------------------
     def validate_business_questions(self, dataset: str, questions: list[str]) -> dict[str, Any]:
-        tables = self.metastore.list_tables(dataset)
-        vocab: dict[str, list[str]] = {}
-        for t in tables:
-            meta = self.metastore.get_table(dataset, t["table"])
-            vocab[t["table"]] = [c["name"] for c in meta["columns"]]
+        # One query for all tables+columns; build the vocabulary in memory.
+        vocab: dict[str, list[str]] = {
+            t["table"]: [c["name"] for c in t["columns"]]
+            for t in self.metastore.list_tables_with_columns(dataset)
+        }
 
         verdicts = []
         for q in questions:
@@ -390,15 +390,15 @@ class InsightAgent:
             return None
 
     def _llm_suggestions(
-        self, dataset: str, tables: list[dict[str, Any]]
+        self, tables: list[dict[str, Any]]
     ) -> list[dict[str, str]] | None:
         provider = self._provider()
         if provider is None:
             return None
         try:
+            # `tables` already carries columns — no per-table metastore reads.
             schema = "\n".join(
-                f"{t['table']}({', '.join(c['name'] for c in self.metastore.get_table(dataset, t['table'])['columns'])})"
-                for t in tables
+                f"{t['table']}({', '.join(c['name'] for c in t['columns'])})" for t in tables
             )
             raw = provider.complete(
                 "You suggest read-only analytical SQL (DuckDB). Respond with a JSON "

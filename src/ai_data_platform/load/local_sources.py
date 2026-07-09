@@ -23,9 +23,11 @@ def detect_staging_format(data_dir: Path, preferred: StagingFormat | None) -> St
     )
 
 
-def resolve_source_uri(data_dir: Path, table: str, fmt: StagingFormat) -> str:
+def resolve_source_uri(
+    data_dir: Path, table: str, fmt: StagingFormat, *, must_exist: bool = True
+) -> str:
     """Per-table ingestr source URI (ingestr uses csv://, parquet://, duckdb://)."""
-    path = staging_file_path(data_dir, table, fmt)
+    path = staging_file_path(data_dir, table, fmt, must_exist=must_exist)
     if fmt == "duckdb":
         return f"duckdb:///{path.resolve()}"
     if fmt == "parquet":
@@ -41,12 +43,14 @@ def resolve_source_table(table: str, fmt: StagingFormat) -> str:
     return table
 
 
-def staging_file_path(data_dir: Path, table: str, fmt: StagingFormat) -> Path:
+def staging_file_path(
+    data_dir: Path, table: str, fmt: StagingFormat, *, must_exist: bool = True
+) -> Path:
     if fmt == "duckdb":
         return data_dir / "generated.duckdb"
     ext = "parquet" if fmt == "parquet" else "csv"
     path = data_dir / f"{table}.{ext}"
-    if not path.exists():
+    if must_exist and not path.exists():
         raise LoadError(
             f"Staging file missing for table {table!r}: {path}",
             hint="Run `adp generate-data` or pass --tables with existing outputs.",

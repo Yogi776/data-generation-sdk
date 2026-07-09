@@ -80,6 +80,8 @@ class DestinationConfig(BaseModel):
     primary_key: str | None = None
     incremental_key: str | None = None
     ingestr_options: dict[str, Any] = Field(default_factory=dict)
+    table_ingestr_options: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    auto_extract_partition: bool = False
     stream: StreamConfig | None = None
     source: SourceConfig | None = None
 

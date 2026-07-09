@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from ai_data_platform.core.exceptions import GenerationError
 from ai_data_platform.core.graph import topo_sort
 from ai_data_platform.core.logging import get_logger
+from ai_data_platform.generator.chunking import effective_chunk_rows
 from ai_data_platform.generator.samplers import SamplerSpec, build_sampler, infer_sampler
 from ai_data_platform.generator.writers import ChunkWriter
 
@@ -89,6 +90,7 @@ def build_plan(
     """Compile catalog metadata (+latest profiles) into a GenerationPlan."""
     all_tables = [t["table"] for t in catalog.list_tables()]
     selected = tables or all_tables
+    selected_set = set(selected)
     unknown = set(selected) - set(all_tables)
     if unknown:
         raise GenerationError(
@@ -105,8 +107,8 @@ def build_plan(
         r
         for r in catalog.get_relationships()
         if r["confidence"] >= fk_confidence_min
-        and r["child_table"] in selected
-        and r["parent_table"] in selected
+        and r["child_table"] in selected_set
+        and r["parent_table"] in selected_set
     ]
     order = topo_sort(selected, [(r["child_table"], r["parent_table"]) for r in rels])
 
@@ -385,13 +387,18 @@ def generate(
     *,
     output_format: str = "parquet",
     parallel_workers: int = 1,
+    tables: set[str] | None = None,
+    key_pool: dict[tuple[str, str], pl.Series] | None = None,
 ) -> dict[str, Any]:
     """Execute a plan, streaming each chunk to disk. Returns {table: {rows, path}}.
 
     Peak memory is bounded to one chunk plus the parent key pools (only the
     key columns of already-generated tables), never a whole table.
+
+    Pass ``tables`` to generate a subset (parents must already be in ``key_pool``).
+    Pass a shared ``key_pool`` dict across calls for wave-by-wave generate+load.
     """
-    key_pool: dict[tuple[str, str], pl.Series] = {}
+    pool = key_pool if key_pool is not None else {}
     results: dict[str, Any] = {}
 
     # columns each parent must publish so children can inherit them (seasonal anchor carry)
@@ -402,65 +409,86 @@ def generate(
                 carry_cols.setdefault(fk.parent_table, set()).add(inh.parent_column)
 
     for tp in plan.tables:
-        # one_to_one FKs: a unique permutation of parent keys (no reuse)
-        o2o_perm: dict[str, np.ndarray] = {}
-        for fk in tp.foreign_keys:
-            if fk.relationship != "one_to_one":
-                continue
-            pool = key_pool.get((fk.parent_table, fk.parent_column))
-            if pool is not None and tp.rows > len(pool):
-                raise GenerationError(
-                    f"one_to_one join {tp.name}.{fk.column} -> {fk.parent_table}."
-                    f"{fk.parent_column}: {tp.rows} rows requested but parent has "
-                    f"only {len(pool)} keys.",
-                    hint="For 1:1 joins the child cannot have more rows than the parent.",
-                )
-            if pool is not None:
-                o2o_perm[fk.column] = _table_rng(
-                    plan.seed, f"{tp.name}:o2o:{fk.column}", 0
-                ).permutation(len(pool))
-
-        writer = ChunkWriter(tp.name, output_dir, output_format)
-        key_cols = [cp.name for cp in tp.columns if cp.sampler in ("sequence", "uuid")]
-        # also accumulate any columns children want to inherit (e.g. the seasonal anchor)
-        accum_cols = list(dict.fromkeys(key_cols + sorted(carry_cols.get(tp.name, set()))))
-        key_accum: dict[str, list[pl.Series]] = {c: [] for c in accum_cols}
-        specs = _chunk_specs(tp.rows, plan.chunk_rows)
-        workers = _resolve_workers(parallel_workers)
-
-        if workers > 1 and len(specs) > 1:
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                futures = {
-                    executor.submit(
-                        _build_chunk, plan, tp, idx, offset, n, key_pool, o2o_perm
-                    ): idx
-                    for idx, offset, n in specs
-                }
-                chunks_by_idx: dict[int, pl.DataFrame] = {}
-                for fut in futures:
-                    idx = futures[fut]
-                    chunks_by_idx[idx] = fut.result()
-            ordered = [chunks_by_idx[i] for i in range(len(specs))]
-        else:
-            ordered = [
-                _build_chunk(plan, tp, idx, offset, n, key_pool, o2o_perm)
-                for idx, offset, n in specs
-            ]
-
-        total = 0
-        for chunk_df in ordered:
-            writer.write_chunk(chunk_df)
-            for c in accum_cols:
-                if c in chunk_df.columns:
-                    key_accum[c].append(chunk_df.get_column(c))
-            total += len(chunk_df)
-        path = writer.close()
-
-        # register this table's key + carried columns for children
-        for c in accum_cols:
-            series = key_accum[c]
-            if series:
-                key_pool[(tp.name, c)] = pl.concat(series) if len(series) > 1 else series[0]
-        results[tp.name] = {"rows": total, "path": str(path)}
-        log.info("generated %s: %d rows -> %s", tp.name, total, path)
+        if tables is not None and tp.name not in tables:
+            continue
+        results[tp.name] = _generate_one_table(
+            plan,
+            tp,
+            output_dir,
+            output_format=output_format,
+            parallel_workers=parallel_workers,
+            key_pool=pool,
+            carry_cols=carry_cols,
+        )
     return results
+
+
+def _generate_one_table(
+    plan: GenerationPlan,
+    tp: TablePlan,
+    output_dir: str | Path,
+    *,
+    output_format: str,
+    parallel_workers: int,
+    key_pool: dict[tuple[str, str], pl.Series],
+    carry_cols: dict[str, set[str]],
+) -> dict[str, Any]:
+    # one_to_one FKs: a unique permutation of parent keys (no reuse)
+    o2o_perm: dict[str, np.ndarray] = {}
+    for fk in tp.foreign_keys:
+        if fk.relationship != "one_to_one":
+            continue
+        pool = key_pool.get((fk.parent_table, fk.parent_column))
+        if pool is not None and tp.rows > len(pool):
+            raise GenerationError(
+                f"one_to_one join {tp.name}.{fk.column} -> {fk.parent_table}."
+                f"{fk.parent_column}: {tp.rows} rows requested but parent has "
+                f"only {len(pool)} keys.",
+                hint="For 1:1 joins the child cannot have more rows than the parent.",
+            )
+        if pool is not None:
+            o2o_perm[fk.column] = _table_rng(
+                plan.seed, f"{tp.name}:o2o:{fk.column}", 0
+            ).permutation(len(pool))
+
+    writer = ChunkWriter(tp.name, output_dir, output_format)
+    key_cols = [cp.name for cp in tp.columns if cp.sampler in ("sequence", "uuid")]
+    accum_cols = list(dict.fromkeys(key_cols + sorted(carry_cols.get(tp.name, set()))))
+    key_accum: dict[str, list[pl.Series]] = {c: [] for c in accum_cols}
+    specs = _chunk_specs(tp.rows, effective_chunk_rows(plan.chunk_rows, tp.rows))
+    workers = _resolve_workers(parallel_workers)
+
+    if workers > 1 and len(specs) > 1:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(
+                    _build_chunk, plan, tp, idx, offset, n, key_pool, o2o_perm
+                ): idx
+                for idx, offset, n in specs
+            }
+            chunks_by_idx: dict[int, pl.DataFrame] = {}
+            for fut in futures:
+                idx = futures[fut]
+                chunks_by_idx[idx] = fut.result()
+        ordered = [chunks_by_idx[i] for i in range(len(specs))]
+    else:
+        ordered = [
+            _build_chunk(plan, tp, idx, offset, n, key_pool, o2o_perm)
+            for idx, offset, n in specs
+        ]
+
+    total = 0
+    for chunk_df in ordered:
+        writer.write_chunk(chunk_df)
+        for c in accum_cols:
+            if c in chunk_df.columns:
+                key_accum[c].append(chunk_df.get_column(c))
+        total += len(chunk_df)
+    path = writer.close()
+
+    for c in accum_cols:
+        series = key_accum[c]
+        if series:
+            key_pool[(tp.name, c)] = pl.concat(series) if len(series) > 1 else series[0]
+    log.info("generated %s: %d rows -> %s", tp.name, total, path)
+    return {"rows": total, "path": str(path)}

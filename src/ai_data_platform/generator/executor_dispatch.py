@@ -10,6 +10,8 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import polars as pl
+
 from ai_data_platform.core.exceptions import GenerationError
 from ai_data_platform.core.logging import get_logger
 from ai_data_platform.generator.engine import GenerationPlan, generate
@@ -118,8 +120,19 @@ def dispatch_generate(
     *,
     output_format: str,
     cfg: GenerationConfig,
+    tables: set[str] | None = None,
+    key_pool: dict[tuple[str, str], pl.Series] | None = None,
 ) -> dict[str, Any]:
     """Run generation via Go (when configured) or the in-process Python engine."""
+    if tables is not None or key_pool is not None:
+        return generate(
+            plan,
+            output_dir,
+            output_format=output_format,
+            parallel_workers=cfg.parallel_workers,
+            tables=tables,
+            key_pool=key_pool,
+        )
     max_rows = max((t.rows for t in plan.tables), default=0)
     if plan_requires_python(plan):
         log.info("plan uses seasonality features; running under the Python engine")

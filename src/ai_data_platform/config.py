@@ -8,7 +8,6 @@ or use `api_key_env` indirection.
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -16,13 +15,32 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ai_data_platform.core.env import SECRET_SHAPED as _SECRET_SHAPED
+from ai_data_platform.core.env import interpolate_env  # re-exported for callers/tests
+
+__all__ = [
+    "CONFIG_FILENAME",
+    "CONFIG_VERSION",
+    "DestinationConfig",
+    "ExplorerConfig",
+    "GenerationConfig",
+    "LoadConfig",
+    "ModelProviderConfig",
+    "ProjectConfig",
+    "SemanticConfig",
+    "SourceConfig",
+    "SourceType",
+    "config_path",
+    "default_config",
+    "interpolate_env",
+    "load_config",
+    "save_config",
+]
 from ai_data_platform.core.exceptions import ConfigError, ProjectNotInitializedError
+from ai_data_platform.load.config_models import DestinationConfig, LoadConfig
 
 CONFIG_FILENAME = "adp.yaml"
 CONFIG_VERSION = 1
-
-_ENV_REF = re.compile(r"\$\{(?P<name>[A-Z0-9_]+)\}")
-_SECRET_SHAPED = re.compile(r"(sk-[A-Za-z0-9\-_]{16,}|[A-Za-z0-9\-_]{48,})")
 
 SourceType = Literal[
     "csv", "parquet", "duckdb", "postgres", "mysql", "snowflake", "trino", "bigquery"
@@ -82,6 +100,10 @@ class GenerationConfig(BaseModel):
     # Executor: python (default), go (external binary), auto (go when available + threshold met).
     executor: Literal["python", "go", "auto"] = "python"
     go_executor_threshold_rows: int = Field(default=10_000_000, ge=1)
+    # Calendar-feature defaults (used when a spec's `calendar` block omits them).
+    fiscal_year_start_month: int = Field(default=1, ge=1, le=12)
+    hemisphere: Literal["north", "south"] = "north"
+    holiday_country: str | None = None  # ISO code, e.g. "IN" — for calendar is_holiday
 
 
 class SemanticConfig(BaseModel):
@@ -148,6 +170,8 @@ class ProjectConfig(BaseModel):
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     semantic: SemanticConfig = Field(default_factory=SemanticConfig)
     explorer: ExplorerConfig = Field(default_factory=ExplorerConfig)
+    destinations: list[DestinationConfig] = Field(default_factory=list)
+    load: LoadConfig = Field(default_factory=LoadConfig)
 
     def source(self, name: str) -> SourceConfig:
         for s in self.sources:
@@ -157,21 +181,13 @@ class ProjectConfig(BaseModel):
 
         raise SourceNotFoundError(name, [s.name for s in self.sources])
 
+    def destination(self, name: str) -> DestinationConfig:
+        for d in self.destinations:
+            if d.name == name:
+                return d
+        from ai_data_platform.core.exceptions import DestinationNotFoundError
 
-def interpolate_env(value: str) -> str:
-    """Replace ${VAR} with environment values; missing vars raise ConfigError."""
-
-    def _sub(m: re.Match[str]) -> str:
-        name = m.group("name")
-        val = os.environ.get(name)
-        if val is None:
-            raise ConfigError(
-                f"Environment variable {name!r} referenced in adp.yaml is not set.",
-                hint=f"export {name}=... or add it to your .env file.",
-            )
-        return val
-
-    return _ENV_REF.sub(_sub, value)
+        raise DestinationNotFoundError(name, [d.name for d in self.destinations])
 
 
 def config_path(root: str | Path = ".") -> Path:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from ai_data_platform.config import CONFIG_FILENAME
@@ -18,9 +19,18 @@ def project_root(path: str | Path = ".") -> Path:
 def discover_project_root(start: str | Path | None = None) -> Path:
     """Walk up from *start* (default: cwd) until ``adp.yaml`` is found.
 
-    Lets ``adp mcp-server`` work without a hardcoded ``--project`` path: Cursor
-    (and other MCP hosts) only need to set the process cwd to the workspace.
+    Resolution order:
+    1. ``ADP_PROJECT`` env var (set in MCP config when the host cwd is not the workspace)
+    2. Walk upward from *start* or process cwd
+
+    Lets ``adp mcp-server`` run with no ``--project`` arg when the MCP host sets
+    ``cwd`` to the workspace or ``ADP_PROJECT`` to the project directory.
     """
+    env_root = os.environ.get("ADP_PROJECT", "").strip()
+    if env_root:
+        resolved = Path(env_root).expanduser().resolve()
+        if (resolved / CONFIG_FILENAME).is_file():
+            return resolved
     current = Path(start or Path.cwd()).expanduser().resolve()
     for directory in (current, *current.parents):
         if (directory / CONFIG_FILENAME).is_file():

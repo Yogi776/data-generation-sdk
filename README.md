@@ -39,10 +39,10 @@ There is no `if domain == "healthcare"` in the codebase. Retail orders, patient 
 
 | Domain                  | What you build faster                                      | Validated example                                                                                                               |
 | ----------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| **Retail / E-commerce** | Sales dashboards, fraud models, recommendation engines     | [retail-ecommerce](examples/retail-ecommerce/) — 4 tables, 100/100                                                              |
+| **Retail / E-commerce** | Sales performance, YoY trends, category mix                | [retail-ecommerce](examples/retail-ecommerce/) — 3 years of orders → Snowflake |
 | **Healthcare**          | Patient analytics, admission workflows, compliance testing | [healthcare-claims](https://github.com/Yogi776/data-generation-sdk/tree/main/healthcare-claims) — 5+ tables, temporal/hierarchy |
 | **Finance / Banking**   | Risk scoring, transaction monitoring, regulatory reporting | FK-safe account → transaction chains                                                                                            |
-| **SaaS / CRM**          | Customer 360, churn models, sales pipelines                | [customer-transaction](examples/customer-transaction/) — 98 columns, 100/100                                                    |
+| **SaaS / CRM**          | Customer 360, churn models, sales pipelines                | Same pattern as retail — connect CSV/DB samples and profile                                                                       |
 | **Manufacturing / IoT** | Supply chain dashboards, work-order tracking               | Parent-child BOM relationships                                                                                                  |
 | **Any new vertical**    | POC before production access is granted                    | Cold-start from `spec.yaml` — no sample data needed                                                                             |
 
@@ -221,12 +221,14 @@ You have a design doc or schema in mind. No sample files required.
 ```bash
 mkdir demo && cd demo
 adp init --name demo
-adp apply-spec path/to/spec.yaml       # see examples/customer-transaction, healthcare-claims (GitHub)
+adp apply-spec path/to/spec.yaml       # see healthcare-claims (GitHub) or benchmarks/fixtures/
 adp generate-data --rows 50000 --output parquet
 adp quality-check --report quality.md
+# Optional: push to Snowflake / BigQuery / Postgres (pip install 'ai-data-platform[load]')
+# adp load --destination snowflake_dev
 ```
 
-**You get:** `output/*.parquet` + `quality.md` with score 100/100.
+**You get:** `output/*.parquet` + `quality.md` with score 100/100. See [docs/LOAD.md](docs/LOAD.md) for warehouse export.
 
 ### Path B — learn from sample data (~10 min)
 
@@ -306,12 +308,9 @@ print(client.quality_check()["quality_score"])   # → 100.0
 
 ## Examples
 
+One walkthrough project — [retail-ecommerce](examples/retail-ecommerce/): **sales performance analysis** with 3 years of order history, generate parquet, `adp load` to Snowflake, and ready-made KPI SQL.
 
-| Example                                                                                         | Path     | Tables    | Best for                         |
-| ----------------------------------------------------------------------------------------------- | -------- | --------- | -------------------------------- |
-| [customer-transaction](examples/customer-transaction/)                                          | A or B   | 2 (+ KYC) | Full 98-column e-commerce model  |
-| [retail-ecommerce](examples/retail-ecommerce/)                                                  | B — CSV  | 4         | Retail star schema, 32/32 checks |
-| [healthcare-claims](https://github.com/Yogi776/data-generation-sdk/tree/main/healthcare-claims) | A — spec | 5+        | Temporal rules, hierarchies      |
+For spec-only generation (no sample data), see [healthcare-claims](https://github.com/Yogi776/data-generation-sdk/tree/main/healthcare-claims) or `benchmarks/fixtures/seasonal-retail-spec.yaml`.
 
 
 ---
@@ -379,7 +378,133 @@ tables:
 
 ---
 
+## Benchmarks
 
+Performance benchmarks are in `benchmarks/bench_generation.py`. Run them with Python 3.11+:
+
+```bash
+# Smoke test — 100K rows
+python benchmarks/bench_generation.py --rows 100000
+
+# Full benchmark — 10M rows per table (3 tables, 30M total rows)
+python benchmarks/bench_generation.py \
+  --rows 10000000 \
+  --rows-per-table "fact_orders=10000000,fact_payments=10000000,fact_shipments=10000000"
+```
+
+### Benchmark: Seasonal-Retail Spec · 10M rows/table · Parquet · 1 worker
+
+Generated July 2026 on an 8-core machine.
+
+| Metric | Value |
+|---|---|
+| **Total rows** | 30,000,000 (10M × 3 tables) |
+| **Wall time** | 2 min 55 s |
+| **Throughput** | 171,070 rows/s |
+| **Peak RSS** | 2,004 MB |
+| **Output size** | 2,355 MB (compressed Parquet) |
+| **Quality score** | 100/100 ✓ (27/27 checks passed) |
+| **Seasonality score** | 100/100 ✓ (4/4 checks passed) |
+| **Heuristic memory vs actual** | 3,020 MB est vs 2,004 MB actual (−34%) |
+
+Per-table breakdown:
+
+| Table | Rows | Output | Gen time |
+|---|---|---|---|
+| `fact_orders` | 10M | 552.8 MB | ~50s |
+| `fact_payments` | 10M | 931.6 MB | ~53s |
+| `fact_shipments` | 10M | 870.6 MB | ~53s |
+
+#### Bottleneck identified
+
+The execution planner's complexity analyzer correctly flags **GIL-bound Python string samplers** as the thread-scaling ceiling:
+
+```
+⚠ fact_orders: 2 per-row Python string sampler(s) (order_id, order_ts_season)
+  are GIL-bound and cap thread scaling at scale
+  (Phase 3: vectorize).
+```
+
+`uuid` and `seasonal_date` samplers are the affected types — they construct strings per-row in Python. Vectorizing these (Phase 3 roadmap) is the single highest-leverage optimization for multi-worker throughput.
+
+#### Memory model accuracy
+
+The static memory estimator (heuristic) predicted 3,020 MB while actual peak RSS was 2,004 MB — a **−34% overestimate**. The `OVERHEAD=2.0` factor in `memory_estimator.py` is conservative; the engine's chunked execution is more memory-efficient than modeled. The estimator correctly flagged the large-table risk but the real system handles it better than the static bound.
+
+#### Scaling ladder (observed)
+
+| Rows/table | Total rows | Wall time | Throughput | Peak RSS |
+|---|---|---|---|---|
+| 100K | 300K | 1.2 s | 121K rows/s | 119 MB |
+| 10M | 30M | 175 s | 171K rows/s | 2,004 MB |
+
+Throughput scales from 121K → 171K rows/s as the system warms up (JIT, OS caches), confirming vectorized numeric generation is not the bottleneck at this scale.
+
+### Output format comparison
+
+Seasonal-retail spec · 5M rows/table · 15M total rows · 1 worker · July 2026.
+
+```bash
+# Compare formats at 5M rows/table
+python benchmarks/bench_generation.py \
+  --rows 5000000 \
+  --format csv \
+  --rows-per-table "fact_orders=5000000,fact_payments=5000000,fact_shipments=5000000"
+
+python benchmarks/bench_generation.py \
+  --rows 5000000 \
+  --format parquet \
+  --rows-per-table "fact_orders=5000000,fact_payments=5000000,fact_shipments=5000000"
+
+python benchmarks/bench_generation.py \
+  --rows 5000000 \
+  --format duckdb \
+  --rows-per-table "fact_orders=5000000,fact_payments=5000000,fact_shipments=5000000"
+```
+
+#### Generation benchmark (5M rows/table)
+
+| Format | Wall time | Throughput | Output size | Quality score |
+|---|---|---|---|---|
+| **CSV** | **102.3 s** | **146,656 rows/s** | 1,859.7 MB | 100/100 ✓ |
+| **Parquet** | 110.2 s | 136,083 rows/s | **1,176.9 MB** | 100/100 ✓ |
+| **DuckDB** | 145.7 s | 102,954 rows/s | 2,223.0 MB | N/A* |
+
+\* DuckDB writes a single `generated.duckdb` file; quality/seasonality checks currently expect CSV or Parquet on disk.
+
+#### Micro-benchmark (1M rows · generate + read + aggregate)
+
+| Format | Generate | Read | Aggregate | File size |
+|---|---|---|---|---|
+| CSV | 12.7 s | 0.0 s | 0.1 s | 128 MB |
+| **Parquet** | **12.0 s** | **0.0 s** | **0.1 s** | 121 MB |
+| DuckDB | 12.7 s | 0.1 s | 0.1 s | **74 MB** |
+
+#### Recommendations
+
+| Use case | Best format | Why |
+|---|---|---|
+| Fastest generation | **CSV** | ~8% faster wall time; no columnar encoding overhead |
+| Storage efficiency | **Parquet** | 37% smaller than CSV; columnar + ZSTD compression |
+| In-database analytics | **DuckDB** | Smallest on-disk footprint; native SQL; zero-copy reads |
+| ML / feature stores | **Parquet** | Industry standard; column pruning; cross-platform |
+| Demo / CSV-first pipelines | **CSV** | Universal compatibility; fastest write path |
+
+---
+
+## Product & pricing
+
+Commercial packaging and roadmap (draft):
+
+- [Market research](docs/MARKET-RESEARCH.md) — why buyers pay, positioning, target customers, revenue model
+- [Data marketplace](docs/DATA-MARKETPLACE.md) — sell synthetic data directly; feasibility and launch plan
+- [Data store SKUs](docs/DATA-STORE-SKUS.md) — first 5 product listings ($19–$299)
+- [Product roadmap](docs/PRODUCT-ROADMAP.md) — what to sell now, build next, and target customers
+- [Pricing](docs/PRICING.md) — tier packaging, vertical SKUs, and services
+- [Outbound templates](docs/OUTBOUND-TEMPLATES.md) — email templates for first design partners
+- [Dataset license](docs/templates/DATASET-LICENSE.md) — commercial license template for data store
+
+---
 
 ## Development
 

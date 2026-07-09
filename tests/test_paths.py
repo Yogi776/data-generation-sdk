@@ -27,6 +27,15 @@ def test_discover_project_root_missing_raises(
         discover_project_root()
 
 
+def test_discover_project_root_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    save_config(default_config("env"), tmp_path)
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    monkeypatch.chdir(other)
+    monkeypatch.setenv("ADP_PROJECT", str(tmp_path))
+    assert discover_project_root() == tmp_path.resolve()
+
+
 def test_resolve_project_explicit_path(tmp_path: Path) -> None:
     save_config(default_config("explicit"), tmp_path)
     assert resolve_project_path(tmp_path) == tmp_path.resolve()

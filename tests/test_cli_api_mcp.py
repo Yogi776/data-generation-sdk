@@ -144,6 +144,8 @@ async def test_mcp_tools_registered(profiled_project: ADPClient) -> None:
         "generate_synthetic_data",
         "create_semantic_model",
         "run_quality_check",
+        "preview_seasonality",
+        "run_seasonality_check",
         "generate_docs",
         "scan_sources",
         "profile_source",
@@ -197,6 +199,90 @@ async def test_mcp_apply_spec_and_preview(tmp_path: Path) -> None:
     # preview cap enforced
     p = _payload(await server.call_tool("preview_data", {"table": "sensors", "limit": 500}))
     assert p["ok"] and p["result"]["showing"] <= 50
+
+
+SEASONAL_SPEC_FOR_MCP = """
+version: 1
+tables:
+  - name: fact_orders
+    seasonality:
+      anchor: order_ts
+      weekly: {Sat: 2.0, Mon: 0.5}
+      events: [{name: bf, start: 2024-11-28, end: 2024-11-30, multiplier: 5.0}]
+    columns:
+      - {name: order_id, type: uuid, primary_key: true}
+      - {name: order_ts, type: datetime, start: 2024-01-01, end: 2025-12-31}
+"""
+
+
+@pytest.mark.anyio
+async def test_mcp_seasonality_tools(tmp_path: Path) -> None:
+    """Parity: preview + validate seasonality through MCP alone."""
+    from ai_data_platform.mcp.server import create_server
+
+    ADPClient(tmp_path).init("mcp-seasonal")
+    server = create_server(str(tmp_path))
+    assert _payload(await server.call_tool("apply_spec", {"spec_yaml": SEASONAL_SPEC_FOR_MCP}))["ok"]
+    pv = _payload(await server.call_tool("preview_seasonality", {"table": "fact_orders"}))
+    assert pv["ok"] and pv["result"]["anchor"] == "order_ts"
+    assert _payload(
+        await server.call_tool("generate_synthetic_data", {"rows": 8000, "output_format": "parquet"})
+    )["ok"]
+    chk = _payload(await server.call_tool("run_seasonality_check", {}))
+    assert chk["ok"] and "seasonality_score" in chk["result"]
+
+
+def test_cli_seasonality_flow(tmp_path: Path) -> None:
+    """CLI parity: apply-spec -> generate -> seasonality-preview + seasonality-check."""
+    p = str(tmp_path)
+    assert runner.invoke(app, ["init", "--path", p]).exit_code == 0
+    (tmp_path / "spec.yaml").write_text(SEASONAL_SPEC_FOR_MCP, encoding="utf-8")
+    assert runner.invoke(app, ["apply-spec", "spec.yaml", "--project", p]).exit_code == 0
+    prev = runner.invoke(app, ["seasonality-preview", "fact_orders", "--project", p])
+    assert prev.exit_code == 0, prev.output
+    assert "order_ts" in prev.output
+    assert runner.invoke(app, ["generate-data", "--rows", "8000", "--project", p]).exit_code == 0
+    chk = runner.invoke(
+        app, ["seasonality-check", "--project", p, "--report", "s.md", "--csv", "s.csv"]
+    )
+    assert chk.exit_code == 0, chk.output
+    assert "Seasonality score" in chk.output
+    assert (tmp_path / "s.md").exists() and (tmp_path / "s.csv").exists()
+
+
+def test_cli_optimizer_flow(tmp_path: Path) -> None:
+    """CLI parity: plan-execution (+ optional spec arg + --json) and analyze-complexity."""
+    p = str(tmp_path)
+    assert runner.invoke(app, ["init", "--path", p]).exit_code == 0
+    (tmp_path / "spec.yaml").write_text(SEASONAL_SPEC_FOR_MCP, encoding="utf-8")
+    plan = runner.invoke(
+        app, ["plan-execution", "spec.yaml", "--rows", "50000000", "--json", "--project", p]
+    )
+    assert plan.exit_code == 0, plan.output
+    ep = json.loads(plan.output)
+    assert {
+        "estimated_rows", "recommended_batch_size", "recommended_format", "partition_by",
+        "parallelism", "memory_estimate_mb", "expected_runtime_class", "optimization_warnings",
+    } <= set(ep)
+    assert ep["partition_by"] == ["order_ts"]
+    cx = runner.invoke(app, ["analyze-complexity", "--rows", "50000000", "--project", p])
+    assert cx.exit_code == 0, cx.output
+    assert "Module complexity" in cx.output
+
+
+@pytest.mark.anyio
+async def test_mcp_optimizer_tools(tmp_path: Path) -> None:
+    from ai_data_platform.mcp.server import create_server
+
+    ADPClient(tmp_path).init("mcp-opt")
+    server = create_server(str(tmp_path))
+    tools = {t.name for t in await server.list_tools()}
+    assert {"plan_execution", "analyze_complexity"} <= tools
+    assert _payload(await server.call_tool("apply_spec", {"spec_yaml": SEASONAL_SPEC_FOR_MCP}))["ok"]
+    ep = _payload(await server.call_tool("plan_execution", {"rows": 100000000}))
+    assert ep["ok"] and ep["result"]["expected_runtime_class"] == "xlarge"
+    cx = _payload(await server.call_tool("analyze_complexity", {"rows": 1000000}))
+    assert cx["ok"] and cx["result"]["modules"]
 
 
 @pytest.mark.anyio

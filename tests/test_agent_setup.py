@@ -27,6 +27,8 @@ def test_install_agent_writes_mcp_and_skills(tmp_path: Path) -> None:
     assert (skills / "adp-intake" / "SKILL.md").exists()
     assert len(result["skills"]) >= 7
     content = (tmp_path / ".cursor" / "mcp.json").read_text()
+    assert '"mcp-server"' in content
+    assert '"cwd"' in content
     assert str(tmp_path.resolve()) in content
 
 

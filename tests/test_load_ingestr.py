@@ -39,6 +39,20 @@ def test_build_ingestr_argv_merge_and_options() -> None:
     assert "--staging-bucket" in argv
 
 
+def test_build_ingestr_argv_source_sql_not_emitted() -> None:
+    spec = TableLoadSpec(
+        table="t",
+        source_uri="postgresql://localhost/db",
+        source_table="orders",
+        dest_uri="snowflake://acct/db",
+        dest_table="PUBLIC.orders",
+        source_sql="SELECT * FROM orders",
+        is_live_source=True,
+    )
+    argv = build_ingestr_argv(spec)
+    assert "--sql" not in argv
+
+
 def test_ingestr_transport_dry_run() -> None:
     t = IngestrTransport()
     spec = TableLoadSpec(

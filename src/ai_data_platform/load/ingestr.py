@@ -56,9 +56,15 @@ def build_ingestr_argv(spec: TableLoadSpec) -> list[str]:
         if spec.metrics_addr:
             argv.extend(["--metrics-addr", spec.metrics_addr])
 
-    # Custom SQL query (used when source is a live DB with a custom extraction query)
+    # Custom SQL on live sources is not passed as a CLI flag (ingestr has no --sql).
+    # Use source.table + incremental_key + interval_start/interval_end instead,
+    # or filter via source.ingestr_options (e.g. sql_limit).
     if spec.source_sql:
-        argv.extend(["--sql", spec.source_sql])
+        log.warning(
+            "source.sql is set for %s but ingestr has no --sql flag; "
+            "use source.table + incremental_key + interval_start/interval_end",
+            spec.table,
+        )
 
     for key, value in spec.ingestr_options.items():
         flag = _flag_name(key)
@@ -86,13 +92,17 @@ def _read_stream(stream: Any, prefix: str) -> None:
 class IngestrTransport:
     def __init__(self, runner: Runner | None = None) -> None:
         self._runner = runner or subprocess.run
+        self._availability_checked = False
 
     def ensure_available(self) -> None:
+        if self._availability_checked:
+            return
         if shutil.which("ingestr") is None:
             raise LoadError(
                 "ingestr is not installed or not on PATH.",
                 hint="pip install 'ai-data-platform[load]' or pip install 'ingestr[sdk]'",
             )
+        self._availability_checked = True
 
     def load_table(
         self, spec: TableLoadSpec, *, dry_run: bool = False
@@ -110,12 +120,26 @@ class IngestrTransport:
                 status="dry_run",
                 elapsed_ms=0.0,
             )
-        if self._runner is subprocess.run:
-            self.ensure_available()
 
-        # Start streaming threads for both stdout and stderr before subprocess.run
-        # so no output is missed.
         started = time.perf_counter()
+        if self._runner is not subprocess.run:
+            proc = self._runner(cmd, capture_output=True, text=True, check=False)
+            elapsed = (time.perf_counter() - started) * 1000
+            if proc.returncode != 0:
+                return TableLoadResult(
+                    table=spec.table,
+                    dest_table=spec.dest_table,
+                    status="failed",
+                    elapsed_ms=elapsed,
+                    error=f"ingestr exited with code {proc.returncode}",
+                )
+            return TableLoadResult(
+                table=spec.table,
+                dest_table=spec.dest_table,
+                status="ok",
+                elapsed_ms=elapsed,
+            )
+
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,

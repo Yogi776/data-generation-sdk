@@ -19,12 +19,13 @@ def table_waves(
     """Return FK-safe waves of table names (parallel within a wave)."""
     all_tables = [t["table"] for t in catalog.list_tables()]
     selected = tables or all_tables
+    selected_set = set(selected)
     rels = [
         r
         for r in catalog.get_relationships()
         if r["confidence"] >= fk_confidence_min
-        and r["child_table"] in selected
-        and r["parent_table"] in selected
+        and r["child_table"] in selected_set
+        and r["parent_table"] in selected_set
     ]
     edges = [(r["child_table"], r["parent_table"]) for r in rels]
     return topo_waves(selected, edges)

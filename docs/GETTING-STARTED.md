@@ -31,7 +31,7 @@ source /path/to/venv/bin/activate
 | Situation | Path | Time | Example |
 |---|---|---|---|
 | No data; you have a design doc or schema in mind | A — spec-only | ~5 min | `healthcare-claims` |
-| Have CSV/Parquet/DB samples you want to learn from | B — learn from data | ~10 min | `examples/customer-transaction` |
+| Have CSV/Parquet/DB samples you want to learn from | B — learn from data | ~10 min | `examples/retail-ecommerce` |
 | Using Cursor, Claude Code, or Windsurf | C — MCP | ~3 min | `cursor-test/` |
 | Want to explore generated data with SQL | D — Explorer | after any generate | `adp explore sql` |
 | Quality passes but KPIs drift from research targets | E — Calibrate | ~5 min | adjust `values` weights in spec |
@@ -71,8 +71,8 @@ Run `adp apply-spec <spec.yaml>` to define your schema.
 Copy a ready-made spec from the examples:
 
 ```bash
-# customer-transaction (2 tables + KYC, 98 columns)
-cp ../ai-data-platform/examples/customer-transaction/spec.yaml .
+# Spec-only: copy from benchmarks/fixtures/ or healthcare-claims on GitHub
+cp ../ai-data-platform/benchmarks/fixtures/seasonal-retail-spec.yaml spec.yaml
 
 # Or get the healthcare-claims spec from the GitHub repo:
 # https://github.com/Yogi776/data-generation-sdk/blob/main/healthcare-claims/spec.yaml
@@ -187,86 +187,39 @@ Use this when you have representative data samples (CSVs, Parquet, DuckDB, Postg
 | 100–500 rows/table | Good fidelity; recommended for development |
 | 500+ rows/table | Production-quality fidelity; validated 100/100 |
 
-### Step 1 — Init and connect
+### Step 1 — Scan and profile
 
 ```bash
-cd examples/customer-transaction
-adp init --name crm-demo
-adp connect --name crm --type csv --path ./data
-```
-
-> **Tip:** Put your CSV/Parquet files in a `./data/` folder. Point `--path` at that folder. Each file becomes a table named by its filename.
-
-**Files created:**
-```
-examples/customer-transaction/
-├── adp.yaml          # updated with source
-└── data/
-    ├── dim_customer.csv
-    └── fact_transaction.csv
-```
-
-**What success looks like:**
-
-```
-Connecting source 'shop' (csv)...
-  Found 2 tables: customers, orders
-Connection saved to adp.yaml.
-```
-
-For PostgreSQL:
-
-```bash
-export PGPASSWORD=yourpassword    # or put in .env
-adp connect --name prod --type postgres \
-  --dsn "postgresql+psycopg://user:${PGPASSWORD}@localhost:5432/shop" \
-  --schema public
-```
-
-### Step 2 — Scan (discover schema)
-
-```bash
+cd examples/retail-ecommerce
 adp scan
+adp profile
+```
+
+**Project layout:**
+
+```
+examples/retail-ecommerce/
+├── adp.yaml
+└── data/
+    ├── customers.csv
+    ├── products.csv
+    ├── orders.csv
+    └── transactions.csv
 ```
 
 **What success looks like:**
 
 ```
 Scanning source 'shop'...
-  customers   (4 columns)  FK candidates: none
-  orders      (4 columns)  FK: customer_id → customers (confidence 0.95)
+  customers     (6 columns)
+  products      (5 columns)
+  orders        (5 columns)  FK: customer_id → customers
+  transactions  (4 columns)  FK: order_id → orders
 
-Scan complete. 2 tables registered in catalog.
-Use `adp profile` to compute statistics.
+Profiling complete. Quality: 100/100
 ```
 
-### Step 3 — Profile (learn distributions)
-
-```bash
-adp profile
-# Optional: --sample-rows 20000 to profile more rows per table
-```
-
-**What success looks like:**
-
-```
-Profiling 'customers' (847 rows, sampled 847)...
-  customer_id   uuid      PK candidate  unique=100%  nulls=0%
-  name          string    top: John(4%), Mary(3%), ...  entropy=4.2
-  email         string    format: *@example.com  PII suspected (email)
-  city          string    top: New York(15%), London(12%), ...
-
-Profiling 'orders' (3,291 rows, sampled 3,291)...
-  order_id      uuid      PK candidate  unique=100%  nulls=0%
-  customer_id   uuid      FK → customers  verified 100%
-  amount        float     mean=$142.50  std=$89.30  nulls=2%
-  status        string    Delivered=80%, Processing=12%, Cancelled=8%
-
-PII detected: customers.email (email pattern)
-Quality: 100/100  (32 checks)
-```
-
-### Step 4 — Generate
+### Step 2 — Generate
 
 ```bash
 adp generate-data --rows 50000 --output parquet
@@ -283,7 +236,7 @@ Generating synthetic data (learned from profiles)...
 Output: output/ (parquet)
 ```
 
-### Step 5 — Quality check
+### Step 3 — Quality check
 
 ```bash
 adp quality-check
@@ -351,7 +304,7 @@ Here are exact prompts to try:
 
 **Path A (spec-only):**
 
-> "Apply the customer-transaction spec from `../ai-data-platform/examples/customer-transaction/spec.yaml` and generate 10,000 rows of test data. Run a quality check when done."
+> "Use `examples/retail-ecommerce`: scan, profile, generate 10,000 rows of test data, and run a quality check."
 
 The agent will call: `apply_spec` → `generate_synthetic_data` → `run_quality_check`
 

@@ -71,6 +71,6 @@ Every error carries a hint: no adp.yaml → "run adp init"; missing driver →
 "pip install 'ai-data-platform[postgres]'"; no parent keys → "add rows and
 profile"; SQLite on network mounts → `export ADP_CATALOG_DIR=~/.adp-catalogs`.
 
-## Minimum inputs (tested — see examples/retail-ecommerce/REQUIREMENTS-TO-GENERATE.md)
+## Minimum inputs (tested — see [examples/retail-ecommerce/README.md](../examples/retail-ecommerce/README.md))
 Headers-only CSV → single tables only · ~10 rows + profile → FK-safe dev data ·
 500+ representative rows → production fidelity (validated 100/100).

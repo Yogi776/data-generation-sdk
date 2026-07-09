@@ -10,8 +10,7 @@ For a runnable step-by-step tutorial covering all paths, see [GETTING-STARTED.md
 
 | Example | Tables | Columns | Domain | Best path |
 |---|---|---|---|---|
-| [customer-transaction](examples/customer-transaction/) | 2 (+ KYC) | 98 | CRM | A or B |
-| [retail-ecommerce](examples/retail-ecommerce/) | 4 | ~30 | E-commerce | B — CSV |
+| [retail-ecommerce](examples/retail-ecommerce/) | 4 | ~20 | E-commerce | B — CSV |
 | [healthcare-claims](https://github.com/Yogi776/data-generation-sdk/tree/main/healthcare-claims) | 5 | 159 | Healthcare | A — spec-only |
 | [retail/](../retail/) (sibling project) | 4 | ~30 | Retail | A — spec-only |
 
@@ -85,7 +84,7 @@ adp generate-data --rows 10000 --output parquet
 adp quality-check
 ```
 
-**Example project:** `examples/customer-transaction` (includes `data/` directory with sample CSVs)
+**Example project:** `examples/retail-ecommerce` (includes `data/` directory with sample CSVs)
 
 **Expected outcome:** ~2 minutes total; tables detected from CSVs; FK candidates inferred from column names; quality score printed.
 
@@ -102,7 +101,7 @@ adp quality-check
 **Commands (spec-only):**
 
 ```bash
-cd examples/customer-transaction
+cd examples/retail-ecommerce
 adp apply-spec spec.yaml
 adp generate-data --rows 50000 --output parquet
 adp quality-check
@@ -111,7 +110,7 @@ adp quality-check
 **Commands (from CSV):**
 
 ```bash
-cd examples/customer-transaction
+cd examples/retail-ecommerce
 python make_data.py
 adp init --force
 adp connect --name crm --type csv --path ./data
@@ -120,7 +119,7 @@ adp generate-data --rows 50000
 adp quality-check
 ```
 
-**Example project:** `examples/customer-transaction`
+**Example project:** `examples/retail-ecommerce/`
 
 **Validated targets (50k rows):**
 
@@ -467,7 +466,7 @@ tables = client.list_explorer_tables()
 df = client.execute_explorer_sql("SELECT * FROM customers LIMIT 5")
 ```
 
-**Example project:** `examples/customer-transaction/` (includes CSV sample data and adp.yaml)
+**Example project:** `examples/retail-ecommerce/` (includes CSV sample data and adp.yaml)
 
 **Expected outcome:** Full pipeline controllable programmatically; results returned as dicts; Explorer accessible via SDK.
 

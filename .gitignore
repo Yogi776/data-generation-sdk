@@ -17,6 +17,8 @@ htmlcov/
 output/
 *.duckdb
 .env
+examples/**/.bench/
+examples/**/.cursor/
 
 # editors
 .vscode/

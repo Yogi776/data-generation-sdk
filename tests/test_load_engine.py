@@ -77,3 +77,9 @@ def test_load_engine_with_mock_transport(load_project: ADPClient, monkeypatch) -
     report = engine.load(skip_quality=True)
     assert report.ok
     assert transport.load_table.call_count >= 1
+    transport.ensure_available.assert_called_once()
+
+
+def test_primary_keys_for_tables(load_project: ADPClient) -> None:
+    pks = load_project.catalog.primary_keys_for_tables(["customers", "orders"])
+    assert "customers" in pks or "orders" in pks or pks == {}

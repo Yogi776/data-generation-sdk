@@ -179,6 +179,24 @@ class Catalog:
                 raise TableNotFoundError(table)
             return self._table_dict(rec)
 
+    def primary_keys_for_tables(self, tables: list[str]) -> dict[str, str]:
+        """Return primary-key column name per table (single query)."""
+        if not tables:
+            return {}
+        with self.session() as s:
+            rows = s.scalars(
+                select(TableRecord)
+                .options(joinedload(TableRecord.columns))
+                .where(TableRecord.name.in_(tables))
+            ).unique().all()
+            out: dict[str, str] = {}
+            for rec in rows:
+                for col in rec.columns:
+                    if col.is_primary_key:
+                        out[rec.name] = col.name
+                        break
+            return out
+
     @staticmethod
     def _table_dict(rec: TableRecord) -> dict[str, Any]:
         return {

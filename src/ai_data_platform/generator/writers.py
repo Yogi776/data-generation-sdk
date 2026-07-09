@@ -70,7 +70,12 @@ class ChunkWriter:
 
             table = df.to_arrow()
             if self._pq is None:
-                self._pq = pq.ParquetWriter(str(self.path), table.schema)
+                self._pq = pq.ParquetWriter(
+                    str(self.path),
+                    table.schema,
+                    compression="zstd",
+                    write_statistics=True,
+                )
             else:
                 # keep a stable schema across chunks (e.g. large_string vs string)
                 table = table.cast(self._pq.schema)

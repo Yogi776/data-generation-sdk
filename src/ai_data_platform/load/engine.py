@@ -59,8 +59,18 @@ class LoadEngine:
             data_dir=out_dir,
             tables=tables,
         )
-        all_tables = [s.table for wave in plan.waves for s in wave]
-        has_live_source = any(s.is_live_source for wave in plan.waves for s in wave)
+
+        all_tables: list[str] = []
+        has_live_source = False
+        stream_tables: set[str] = set()
+        for wave in plan.waves:
+            for spec in wave:
+                all_tables.append(spec.table)
+                if spec.is_live_source:
+                    has_live_source = True
+                if spec.stream:
+                    stream_tables.add(spec.table)
+
         if not has_live_source:
             for table in all_tables:
                 staging_file_path(out_dir, table, plan.staging_format)  # type: ignore[arg-type]
@@ -81,12 +91,6 @@ class LoadEngine:
         if not dry_run:
             transport.ensure_available()
 
-        started = time.perf_counter()
-        results: list[TableLoadResult] = []
-        parallel = load_cfg.parallel_tables
-
-        # Warn if any table in the plan has stream mode enabled
-        stream_tables = {s.table for wave in plan.waves for s in wave if s.stream}
         if stream_tables:
             log.warning(
                 "Stream/CDC mode enabled for: %s. "
@@ -94,12 +98,23 @@ class LoadEngine:
                 ", ".join(sorted(stream_tables)),
             )
 
-        for wave in plan.waves:
-            wave_results = self._run_wave(transport, wave, dry_run=dry_run, parallel=parallel)
-            results.extend(wave_results)
-            if any(r.status == "failed" for r in wave_results):
-                log.error("load wave failed; aborting remaining waves")
-                break
+        started = time.perf_counter()
+        results: list[TableLoadResult] = []
+        parallel = load_cfg.parallel_tables
+        max_workers = max(
+            (min(parallel, len(wave)) for wave in plan.waves if len(wave) > 1),
+            default=1,
+        )
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            for wave in plan.waves:
+                wave_results = self._run_wave(
+                    transport, wave, pool=pool, dry_run=dry_run, parallel=parallel
+                )
+                results.extend(wave_results)
+                if any(r.status == "failed" for r in wave_results):
+                    log.error("load wave failed; aborting remaining waves")
+                    break
 
         elapsed = (time.perf_counter() - started) * 1000
         report = LoadReport(
@@ -122,6 +137,7 @@ class LoadEngine:
         transport: object,
         wave: list[TableLoadSpec],
         *,
+        pool: ThreadPoolExecutor,
         dry_run: bool,
         parallel: int,
     ) -> list[TableLoadResult]:
@@ -129,13 +145,12 @@ class LoadEngine:
             return [transport.load_table(spec, dry_run=dry_run) for spec in wave]  # type: ignore[attr-defined]
 
         out: list[TableLoadResult] = []
-        with ThreadPoolExecutor(max_workers=min(parallel, len(wave))) as pool:
-            futures = {
-                pool.submit(transport.load_table, spec, dry_run=dry_run): spec  # type: ignore[attr-defined]
-                for spec in wave
-            }
-            for fut in as_completed(futures):
-                out.append(fut.result())
+        futures = {
+            pool.submit(transport.load_table, spec, dry_run=dry_run): spec  # type: ignore[attr-defined]
+            for spec in wave
+        }
+        for fut in as_completed(futures):
+            out.append(fut.result())
         order = {s.table: i for i, s in enumerate(wave)}
         out.sort(key=lambda r: order.get(r.table, 0))
         return out

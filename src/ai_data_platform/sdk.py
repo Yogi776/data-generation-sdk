@@ -328,6 +328,32 @@ class ADPClient:
             ],
         }
 
+    def generate_and_load(
+        self,
+        rows: int | None = None,
+        *,
+        tables: list[str] | None = None,
+        seed: int | None = None,
+        rows_per_table: dict[str, int] | None = None,
+        destination: str | None = None,
+        output_dir: str | None = None,
+        dry_run: bool = False,
+        skip_quality: bool = True,
+    ) -> dict[str, Any]:
+        """Generate FK-safe waves and load each wave directly to a warehouse."""
+        from ai_data_platform.load.generate_load import GenerateLoadEngine
+
+        return GenerateLoadEngine(self.root, self.catalog, self.config).run(
+            destination=destination,
+            tables=tables,
+            rows=rows,
+            seed=seed,
+            rows_per_table=rows_per_table,
+            output_dir=output_dir,
+            dry_run=dry_run,
+            skip_quality=skip_quality,
+        )
+
     # -- seasonality ----------------------------------------------------------------
     def preview_seasonality(self, table: str) -> dict[str, Any]:
         """Inspect a table's seasonality config and its expected factor curve.

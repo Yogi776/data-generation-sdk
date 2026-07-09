@@ -295,6 +295,76 @@ def generate_data(
         _fail(e)
 
 
+@app.command("generate-load")
+def generate_load(
+    rows: int = typer.Option(None, "--rows", "-r", help="Default rows per table."),
+    rows_per_table: str = typer.Option(
+        None,
+        "--rows-per-table",
+        help='Per-table counts: "products=20,customers=1000,transactions=100000"',
+    ),
+    tables: str = typer.Option(None, "--tables", help="Comma-separated subset of tables."),
+    seed: int = typer.Option(None, "--seed", help="Deterministic seed."),
+    destination: str = typer.Option(None, "--destination", "-d", help="Destination name from adp.yaml."),
+    output_dir: str = typer.Option(None, "--output-dir", help="Staging directory (default output/)."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without executing."),
+    project: str = typer.Option(".", "--project", help="Project directory."),
+) -> None:
+    """Generate synthetic data wave-by-wave and load each wave directly to a warehouse."""
+    from ai_data_platform.core.exceptions import ADPError
+    from ai_data_platform.sdk import ADPClient
+
+    try:
+        rpt: dict[str, int] | None = None
+        if rows_per_table:
+            try:
+                rpt = {
+                    kv.split("=")[0].strip(): int(kv.split("=")[1])
+                    for kv in rows_per_table.split(",")
+                }
+            except (IndexError, ValueError):
+                _fail(Exception('--rows-per-table format: "table=count,table2=count"'))
+        result = ADPClient(project).generate_and_load(
+            rows,
+            tables=[t.strip() for t in tables.split(",")] if tables else None,
+            seed=seed,
+            rows_per_table=rpt,
+            destination=destination,
+            output_dir=output_dir,
+            dry_run=dry_run,
+        )
+        gen = Table(title=f"Generated → {result['destination']} (seed={result['seed']})")
+        gen.add_column("table")
+        gen.add_column("rows")
+        gen.add_column("path")
+        for name, info in result["generated"].items():
+            gen.add_row(name, str(info["rows"]), info["path"])
+        console.print(gen)
+        load = Table(title="Load")
+        load.add_column("table")
+        load.add_column("dest_table")
+        load.add_column("status")
+        load.add_column("ms", justify="right")
+        for row in result["load"]["tables"]:
+            style = (
+                "green"
+                if row["status"] == "ok"
+                else "yellow"
+                if row["status"] == "dry_run"
+                else "red"
+            )
+            load.add_row(
+                row["table"],
+                row["dest_table"],
+                f"[{style}]{row['status']}[/{style}]",
+                f"{row['elapsed_ms']:.0f}",
+            )
+        console.print(load)
+        console.print(f"Total: {result['load']['elapsed_ms']:.0f} ms")
+    except ADPError as e:
+        _fail(e)
+
+
 def _apply_optional_spec(client: object, spec: str | None) -> None:
     if spec:
         client.apply_spec(spec)  # type: ignore[attr-defined]

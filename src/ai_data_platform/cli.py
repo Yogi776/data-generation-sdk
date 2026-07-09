@@ -255,6 +255,9 @@ def generate_data(
     seed: int = typer.Option(None, "--seed", help="Deterministic seed."),
     output: str = typer.Option(None, "--output", "-o", help="csv|parquet|duckdb|sql"),
     output_dir: str = typer.Option(None, "--output-dir", help="Output directory."),
+    optimized: bool = typer.Option(
+        False, "--optimized", help="Apply the execution plan's batch size, parallelism, and format."
+    ),
     project: str = typer.Option(".", "--project", help="Project directory."),
 ) -> None:
     """Generate synthetic data from the catalog (FK-safe, seeded, profile-driven)."""
@@ -278,6 +281,7 @@ def generate_data(
             rows_per_table=rpt,
             output_format=output,
             output_dir=output_dir,
+            optimized=optimized,
         )
         t = Table(title=f"Generated (seed={result['seed']}, format={result['format']})")
         t.add_column("table")
@@ -287,6 +291,97 @@ def generate_data(
             t.add_row(name, str(info["rows"]), info["path"])
         console.print(t)
         console.print("Next: [bold]adp quality-check[/bold] to validate the output.")
+    except ADPError as e:
+        _fail(e)
+
+
+def _apply_optional_spec(client: object, spec: str | None) -> None:
+    if spec:
+        client.apply_spec(spec)  # type: ignore[attr-defined]
+
+
+@app.command("plan-execution")
+def plan_execution_cmd(
+    spec: str = typer.Argument(None, help="Optional spec YAML to apply before planning."),
+    rows: int = typer.Option(None, "--rows", "-r", help="Target rows per table."),
+    tables: str = typer.Option(None, "--tables", help="Comma-separated subset of tables."),
+    seed: int = typer.Option(None, "--seed", help="Deterministic seed."),
+    memory_budget_mb: float = typer.Option(
+        None, "--memory-budget-mb", help="Memory budget in MB (default 4096)."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit the raw execution plan JSON."),
+    project: str = typer.Option(".", "--project", help="Project directory."),
+) -> None:
+    """Size a run before generating: batch size, parallelism, format, partitioning, memory."""
+    from ai_data_platform.core.exceptions import ADPError
+    from ai_data_platform.sdk import ADPClient
+
+    try:
+        client = ADPClient(project)
+        _apply_optional_spec(client, spec)
+        ep = client.plan_execution(
+            rows=rows,
+            tables=[t.strip() for t in tables.split(",")] if tables else None,
+            seed=seed,
+            memory_budget_mb=memory_budget_mb,
+        )
+        if as_json:
+            console.print_json(data=ep)
+            return
+        console.print(f"[bold]Execution plan[/bold] — {ep['estimated_rows']:,} rows, "
+                      f"class=[cyan]{ep['expected_runtime_class']}[/cyan]")
+        console.print(f"  batch size:   {ep['recommended_batch_size']:,}")
+        console.print(f"  parallelism:  {ep['parallelism']}")
+        console.print(f"  format:       {ep['recommended_format']}")
+        console.print(f"  partition by: {ep['partition_by'] or '—'}")
+        mem = ep["memory_estimate_mb"]
+        mcolor = "red" if mem > ep["memory_budget_mb"] else "green"
+        console.print(f"  memory est:   [{mcolor}]{mem:,.0f} MB[/{mcolor}] "
+                      f"(budget {ep['memory_budget_mb']:,.0f} MB)")
+        if ep["optimization_warnings"]:
+            console.print("[yellow]Warnings:[/yellow]")
+            for w in ep["optimization_warnings"]:
+                console.print(f"  ⚠ {w}")
+    except ADPError as e:
+        _fail(e)
+
+
+@app.command("analyze-complexity")
+def analyze_complexity_cmd(
+    spec: str = typer.Argument(None, help="Optional spec YAML to apply before analysis."),
+    rows: int = typer.Option(None, "--rows", "-r", help="Target rows per table."),
+    tables: str = typer.Option(None, "--tables", help="Comma-separated subset of tables."),
+    seed: int = typer.Option(None, "--seed", help="Deterministic seed."),
+    as_json: bool = typer.Option(False, "--json", help="Emit the raw complexity JSON."),
+    project: str = typer.Option(".", "--project", help="Project directory."),
+) -> None:
+    """Static complexity analysis: module time/space table + per-table cost + hot spots."""
+    from ai_data_platform.core.exceptions import ADPError
+    from ai_data_platform.sdk import ADPClient
+
+    try:
+        client = ADPClient(project)
+        _apply_optional_spec(client, spec)
+        rep = client.analyze_complexity(
+            rows=rows,
+            tables=[t.strip() for t in tables.split(",")] if tables else None,
+            seed=seed,
+        )
+        if as_json:
+            console.print_json(data=rep)
+            return
+        mt = Table(title="Module complexity")
+        for c in ("module", "time", "space", "note"):
+            mt.add_column(c)
+        for m in rep["modules"]:
+            mt.add_row(m["module"], m["time"], m["space"], m["note"])
+        console.print(mt)
+        for t in rep["tables"]:
+            py = t["python_string_columns"]
+            console.print(f"[bold]{t['table']}[/bold]: {t['rows']:,} rows, {t['columns']} cols, "
+                          f"{t['foreign_keys']} FK, python-string cols: {py or '—'}")
+        for w in rep["warnings"]:
+            console.print(f"[yellow]⚠[/yellow] {w}")
     except ADPError as e:
         _fail(e)
 
@@ -328,6 +423,79 @@ def quality_check(
 
             path = safe_write_text(client.root, report, report_to_markdown(rep))
             console.print(f"Report written to {path}")
+    except ADPError as e:
+        _fail(e)
+
+
+@app.command("seasonality-preview")
+def seasonality_preview(
+    table: str = typer.Argument(..., help="Table with a seasonality block."),
+    project: str = typer.Option(".", "--project", help="Project directory."),
+) -> None:
+    """Show a table's seasonality config and its expected factor curve (no data needed)."""
+    from ai_data_platform.core.exceptions import ADPError
+    from ai_data_platform.sdk import ADPClient
+
+    try:
+        client = ADPClient(project)
+        info = client.preview_seasonality(table)
+        console.print(f"[bold]{info['table']}[/bold] anchor=[cyan]{info['anchor']}[/cyan] "
+                      f"over {info['days']} days")
+        factor = info["factor"]
+        for key in ("trend", "weekly", "yearly", "monthly", "holidays", "events"):
+            if factor.get(key):
+                console.print(f"  {key}: {factor[key]}")
+        peak = max(info["curve"], key=lambda c: c["intensity"])
+        console.print(f"  peak day (sampled curve): [green]{peak['date']}[/green] "
+                      f"(intensity {peak['intensity']})")
+    except ADPError as e:
+        _fail(e)
+
+
+@app.command("seasonality-check")
+def seasonality_check(
+    data_dir: str = typer.Option(None, "--data-dir", help="Directory of csv/parquet to check."),
+    tables: str = typer.Option(None, "--tables", help="Comma-separated subset of tables."),
+    report: str = typer.Option(None, "--report", help="Write a Markdown report to this path."),
+    csv: str = typer.Option(None, "--csv", help="Write daily observed-vs-expected CSV here."),
+    project: str = typer.Option(".", "--project", help="Project directory."),
+) -> None:
+    """Validate that generated data follows the declared seasonality; print the score."""
+    from ai_data_platform.core.exceptions import ADPError
+    from ai_data_platform.quality.seasonality_report import (
+        seasonality_daily_csv,
+        seasonality_report_to_markdown,
+    )
+    from ai_data_platform.sdk import ADPClient
+
+    try:
+        client = ADPClient(project)
+        table_list = [t.strip() for t in tables.split(",")] if tables else None
+        rep = client.seasonality_check(data_dir, table_list)
+        score = rep["seasonality_score"]
+        color = "green" if score >= 90 else "yellow" if score >= 70 else "red"
+        console.print(f"Seasonality score: [{color}]{score}/100[/{color}]")
+        for cat, v in rep["category_scores"].items():
+            console.print(f"  {cat}: {v}")
+        for t in rep["tables"]:
+            failed = [c for c in t["checks"] if not c["passed"]]
+            if failed:
+                console.print(f"[yellow]{t['table']}[/yellow]: {len(failed)} failing metric(s)")
+                for c in failed:
+                    console.print(f"  ✗ {c['metric']}: {c['evidence']}")
+        for x in rep["cross_table"]:
+            if not x["passed"]:
+                console.print(f"[yellow]propagation[/yellow] {x['child']}→{x['parent']}: {x['evidence']}")
+        if report:
+            from ai_data_platform.core.paths import safe_write_text
+
+            path = safe_write_text(client.root, report, seasonality_report_to_markdown(rep))
+            console.print(f"Report written to {path}")
+        if csv:
+            from ai_data_platform.core.paths import safe_write_text
+
+            path = safe_write_text(client.root, csv, seasonality_daily_csv(rep))
+            console.print(f"Daily CSV written to {path}")
     except ADPError as e:
         _fail(e)
 
@@ -690,6 +858,107 @@ def explore_export(
     try:
         res = _client(project).export_explorer_result(query, filename, dataset, fmt)  # type: ignore[attr-defined]
         console.print(f"Wrote {res['row_count']} rows → {res['path']}")
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+
+
+@app.command()
+def ingest(
+    source_path: str = typer.Argument(..., help="File, folder, URL, or cloud path."),
+    table: str = typer.Option(None, "--table", "-t", help="Target table/view name."),
+    persist: bool = typer.Option(False, "--persist", help="Materialize as a DuckDB table."),
+    profile: bool = typer.Option(False, "--profile", help="Print the column profile."),
+    sheet: str = typer.Option(None, "--sheet", help="Excel sheet name or 0-based index."),
+    fmt: str = typer.Option(None, "--format", help="Force a format (else auto-detected)."),
+    flatten: bool = typer.Option(False, "--flatten", help="Flatten nested JSON."),
+    sample_size: int = typer.Option(10000, "--sample-size", help="Type-inference sample."),
+    project: str = typer.Option(".", "--project", help="Project directory."),
+) -> None:
+    """Ingest any supported file/format into DuckDB and profile it."""
+    from ai_data_platform.ingestion.cli import ingest_command
+
+    try:
+        ingest_command(source_path, table, persist, profile, sheet, fmt, flatten, sample_size, project)
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+
+
+@app.command()
+def query(
+    sql: str = typer.Argument(..., help="A read-only SELECT over ingested tables."),
+    max_rows: int = typer.Option(None, "--max-rows", help="Row cap (default 10000)."),
+    json_out: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
+    project: str = typer.Option(".", "--project", help="Project directory."),
+) -> None:
+    """Run SQL against previously ingested data (SELECT-only)."""
+    from ai_data_platform.ingestion.cli import query_command
+
+    try:
+        query_command(sql, max_rows, project, json_out)
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+
+
+@app.command("list-sources")
+def list_sources(project: str = typer.Option(".", "--project", help="Project directory.")) -> None:
+    """List sources ingested into the DuckDB ingestion database."""
+    from ai_data_platform.ingestion.cli import list_sources_command
+
+    try:
+        list_sources_command(project)
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+
+
+load_app = typer.Typer(help="Load generated data to warehouses via ingestr.")
+app.add_typer(load_app, name="load")
+
+
+@load_app.callback(invoke_without_command=True)
+def load_main(
+    ctx: typer.Context,
+    destination: str = typer.Option(None, "--destination", "-d", help="Destination name from adp.yaml."),
+    tables: str = typer.Option(None, "--tables", help="Comma-separated table subset."),
+    data_dir: str = typer.Option(None, "--data-dir", help="Staging directory (default output/)."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print ingestr plan without executing."),
+    skip_quality: bool = typer.Option(False, "--skip-quality", help="Skip quality gate."),
+    force_quality: bool = typer.Option(False, "--force-quality-check", help="Re-run quality checks."),
+    project: str = typer.Option(".", "--project", help="Project directory."),
+) -> None:
+    """Push generated staging files to a configured destination."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from ai_data_platform.load.cli import load_command
+
+    try:
+        load_command(destination, tables, data_dir, dry_run, skip_quality, force_quality, project)
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
+
+
+@load_app.command("destinations")
+def load_destinations(
+    scheme: str = typer.Option(None, "--scheme", help="Filter by URI scheme prefix."),
+    json_out: bool = typer.Option(False, "--json", help="Emit JSON."),
+) -> None:
+    """List ingestr-supported load destinations."""
+    from ai_data_platform.load.cli import destinations_command
+
+    destinations_command(scheme, json_out)
+
+
+@load_app.command("doctor")
+def load_doctor(
+    destination: str = typer.Option(None, "--destination", "-d", help="Destination to validate."),
+    project: str = typer.Option(".", "--project", help="Project directory."),
+) -> None:
+    """Validate destination config, env vars, and ingestr install."""
+    from ai_data_platform.load.cli import doctor_command
+
+    try:
+        doctor_command(destination, project)
+    except SystemExit:
+        raise
     except Exception as e:  # noqa: BLE001
         _fail(e)
 

@@ -2,7 +2,8 @@
 
 Canonical local tool registry (subset of the platform registry, docs/03):
 apply_spec, scan_sources, profile_source, search_metadata, get_table_schema,
-generate_synthetic_data, preview_data, run_quality_check, create_semantic_model,
+generate_synthetic_data, preview_data, run_quality_check, preview_seasonality,
+run_seasonality_check, plan_execution, analyze_complexity, create_semantic_model,
 generate_sql, generate_docs.
 
 Parity rule: every capability of the CLI is reachable here. All tools are
@@ -200,6 +201,61 @@ def create_server(project_path: str = ".") -> FastMCP:
 
     @mcp.tool()
     @_safe
+    def plan_execution(
+        rows: int | None = None,
+        tables: list[str] | None = None,
+        memory_budget_mb: float | None = None,
+    ) -> str:
+        """Size a generation run BEFORE running it: recommended batch size,
+        parallelism, output format, partition-by column, memory estimate, runtime
+        class, and optimization warnings. Read-only, no generation."""
+        return _ok(client.plan_execution(rows=rows, tables=tables, memory_budget_mb=memory_budget_mb))
+
+    @mcp.tool()
+    @_safe
+    def analyze_complexity(rows: int | None = None, tables: list[str] | None = None) -> str:
+        """Static complexity analysis of the plan: a module time/space table,
+        per-table/-column cost classes, and hot-spot warnings (GIL-bound string
+        samplers, O(rows) scatter). Read-only, no generation."""
+        return _ok(client.analyze_complexity(rows=rows, tables=tables))
+
+    @mcp.tool()
+    @_safe
+    def preview_seasonality(table: str) -> str:
+        """Inspect a table's seasonality config and its expected factor curve
+        (trend, weekly, yearly peaks, holidays, events). Read-only, no generation.
+        Use before generating to sanity-check the declared temporal shape."""
+        return _ok(client.preview_seasonality(table))
+
+    @mcp.tool()
+    @_safe
+    def run_seasonality_check(
+        data_dir: str | None = None, tables: list[str] | None = None
+    ) -> str:
+        """Validate that generated data follows the declared seasonality: weekly
+        pattern, event/holiday spikes, growth trend, expected-vs-observed
+        correlation, and cross-table peak alignment (parents and children peak on
+        the same days). Returns the score plus failing metrics with evidence."""
+        report = client.seasonality_check(data_dir, tables)
+        slim = {
+            "seasonality_score": report["seasonality_score"],
+            "category_scores": report["category_scores"],
+            "failing_metrics": [
+                {"table": t["table"], "metric": c["metric"], "evidence": c["evidence"]}
+                for t in report["tables"]
+                for c in t["checks"]
+                if not c["passed"]
+            ][:50],
+            "cross_table": [
+                {"child": x["child"], "parent": x["parent"], "passed": x["passed"],
+                 "evidence": x["evidence"]}
+                for x in report["cross_table"]
+            ][:50],
+        }
+        return _ok(slim)
+
+    @mcp.tool()
+    @_safe
     def create_semantic_model(name: str = "default", format: str = "generic") -> str:
         """Build a semantic model (facts, dimensions, measures, joins) from the
         catalog and return it as YAML. Formats: generic, cube (Cube.js)."""
@@ -332,6 +388,65 @@ def create_server(project_path: str = ".") -> FastMCP:
         inside the project's export directory. The destination is sandboxed — only
         a filename is accepted, never an arbitrary path."""
         return _ok(client.export_explorer_result(sql, filename, dataset, format))
+
+    # -- Universal ingestion (DuckDB) ------------------------------------------
+    # Read ANY common file/format on demand — local, folder, URL, or cloud — and
+    # make it queryable. Independent of the generation catalog; ingested tables
+    # live in .adp/ingestion.duckdb.
+
+    def _ingestion():  # lazy: keeps `adp --help`/import light
+        from ai_data_platform.ingestion.engine import IngestionEngine
+
+        return IngestionEngine(project_path)
+
+    @mcp.tool()
+    @_safe
+    def ingest_data(
+        source_path: str,
+        table_name: str | None = None,
+        persist: bool = False,
+        sample_size: int = 10000,
+        options: dict[str, Any] | None = None,
+    ) -> str:
+        """Detect, read, profile, and register ANY supported data source into
+        DuckDB, returning schema, row/column counts, per-column stats, quality
+        warnings, sample rows, and ready-to-run SQL. Supports csv/tsv, json/ndjson,
+        parquet (incl. folders/partitions/globs), excel (options={'sheet': …}),
+        arrow, orc, avro, sqlite, and — with optional extensions — delta/iceberg
+        and s3/gs/az/http paths. `persist=true` materializes a table; otherwise a
+        lazy view is created for native formats. `options` may set format,
+        delimiter, has_header, encoding, sheet, flatten (JSON), sqlite_table."""
+        report = _ingestion().ingest(source_path, table_name, persist, sample_size, options)
+        # Trim sample rows for token budget; full report persisted to disk.
+        report = {**report, "sample_rows": report["sample_rows"][:10]}
+        return _ok(report)
+
+    @mcp.tool()
+    @_safe
+    def query_data(sql: str, max_rows: int | None = None) -> str:
+        """Run a single read-only SELECT/WITH over previously ingested tables/views
+        (DuckDB dialect). Row-capped and SELECT-guarded."""
+        return _ok(_ingestion().query(sql, max_rows))
+
+    @mcp.tool()
+    @_safe
+    def list_ingested_sources() -> str:
+        """List sources ingested into the DuckDB ingestion database, with format,
+        relation kind, row/column counts, and timestamps."""
+        return _ok(_ingestion().list_sources())
+
+    @mcp.tool()
+    @_safe
+    def describe_ingested_source(table: str) -> str:
+        """Return the full stored metadata report for an ingested source (schema,
+        profile, quality warnings, generated SQL, documentation)."""
+        return _ok(_ingestion().describe(table))
+
+    @mcp.tool()
+    @_safe
+    def preview_ingested(table: str, limit: int = 20) -> str:
+        """Preview rows of an ingested table (max 200)."""
+        return _ok(_ingestion().preview(table, min(limit, 200)))
 
     # -- resources -----------------------------------------------------------
     @mcp.resource("catalog://tables")

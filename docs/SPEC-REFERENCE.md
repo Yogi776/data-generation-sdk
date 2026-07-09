@@ -265,6 +265,63 @@ If a state's city distribution is not specified, the engine falls back to the co
 
 ---
 
+### `seasonal_scale` — scale a measure by seasonality
+
+Multiply a base-sampled numeric column by the seasonal multiplier at an `anchor`
+date column, so measures grow on peak days/years. Declare after the anchor. Takes
+the same factor fields as the table-level `seasonality` block (`trend`, `weekly`,
+`yearly`, `holidays`, `events`, ...).
+
+```yaml
+- name: revenue
+  type: float
+  mean: 1800
+  std: 900
+  seasonal_scale:
+    anchor: order_ts
+    trend: {kind: linear, annual_growth: 0.1}
+    yearly: {peaks: [{month: 11, day: 29, strength: 1.6, width_days: 5}]}
+```
+
+### `calendar` — derived date-attribute columns
+
+Expands one block into **N columns** named `{prefix or anchor}_{part}`.
+
+```yaml
+- name: cal
+  type: string
+  calendar:
+    anchor: order_ts
+    parts: [day_of_week, is_weekend, month, quarter, fiscal_quarter, season, is_holiday]
+    fiscal_year_start_month: 4     # optional; defaults from adp.yaml generation:
+    hemisphere: north              # optional; for season
+    country: IN                    # optional; for is_holiday / is_business_day
+```
+
+Parts: `day_of_week` (Mon=1..Sun=7), `is_weekend`, `week`, `month`, `quarter`,
+`year`, `fiscal_month`, `fiscal_quarter`, `fiscal_year`, `season`, `is_holiday`,
+`is_business_day`.
+
+### `inherit` — carry a parent column across an FK
+
+Requires `references` on the same column. Format: `"parent_column as local_name"`.
+The child inherits the parent's value **per row** (gathered with the same index as
+the FK key), typically the parent's seasonal timestamp — then offset with `after`:
+
+```yaml
+- name: order_id
+  type: uuid
+  references: fact_orders.order_id
+  inherit: "order_ts as parent_order_ts"
+- name: payment_ts
+  type: datetime
+  after: {column: parent_order_ts, min_minutes: 1, max_minutes: 240}
+```
+
+See [SEASONALITY.md](SEASONALITY.md) for the full seasonality guide.
+
+---
+
 ## Table-level fields
 
 ### `rows` — per-table row count
@@ -290,6 +347,32 @@ Use for dimension tables (small) vs fact tables (large):
   # inherits global --rows from CLI (e.g. 50000)
   columns: [...]
 ```
+
+---
+
+### `seasonality` — time-aware event volume
+
+Shapes an `anchor` timestamp column so event volume peaks on busy days and follows
+a growth trend (the fixed row count is redistributed over time, not changed).
+
+```yaml
+- name: fact_orders
+  rows: 50000
+  seasonality:
+    anchor: order_ts                          # a date/datetime column of this table
+    trend: {kind: linear, annual_growth: 0.18}
+    weekly: {Sat: 1.6, Sun: 1.4, Mon: 0.8}
+    yearly: {amplitude: 0.15, peaks: [{month: 11, day: 29, strength: 3.5, width_days: 4}]}
+    holidays: {country: IN, strength: 1.6, window_days: 1}
+    events: [{name: summer_sale, start: 2025-06-01, end: 2025-06-15, multiplier: 1.8}]
+  columns:
+    - {name: order_id, type: uuid, primary_key: true}
+    - {name: order_ts, type: datetime, start: 2024-01-01, end: 2025-12-31}
+```
+
+A `datetime` anchor also accepts a `daily: {hour_weights: [...24...]}` shape.
+Country holidays need the `[seasonality]` extra; explicit `dates:` need nothing.
+Validate output with `adp seasonality-check`. Full guide: [SEASONALITY.md](SEASONALITY.md).
 
 ---
 
@@ -508,7 +591,7 @@ tables:
 
 | Example | Path | Highlights |
 |---|---|---|
-| [examples/customer-transaction/spec.yaml](../examples/customer-transaction/spec.yaml) | A | 98 columns, all features |
+| [benchmarks/fixtures/seasonal-retail-spec.yaml](../benchmarks/fixtures/seasonal-retail-spec.yaml) | A | Seasonality + FK chain |
 | [cursor-test/spec.yaml](../cursor-test/spec.yaml) | A | MCP test harness; same as customer-transaction |
 | [healthcare-claims/spec.yaml](https://github.com/Yogi776/data-generation-sdk/blob/main/healthcare-claims/spec.yaml) | A | 5+ tables, temporal/hierarchy rules |
 | [retail/spec.yaml](../../retail/spec.yaml) | A | 4-table retail star schema |

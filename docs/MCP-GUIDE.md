@@ -27,12 +27,13 @@ This writes MCP configs for Cursor, Windsurf, and VS Code, plus Cursor skills in
 2. Run `adp init` in your project (auto-writes `.cursor/mcp.json` and skills), or create manually:
 
 ```json
-// .cursor/mcp.json
+// .cursor/mcp.json  (written by `adp init` — cwd is your project root)
 {
   "mcpServers": {
     "adp": {
       "command": "adp",
-      "args": ["mcp-server", "--project", "."]
+      "args": ["mcp-server"],
+      "cwd": "/path/to/your/project"
     }
   }
 }
@@ -41,7 +42,7 @@ This writes MCP configs for Cursor, Windsurf, and VS Code, plus Cursor skills in
 3. Open the folder containing `adp.yaml` as your workspace root
 4. Reload MCP: `Ctrl+Shift+P` → "Reload MCP"
 
-The server auto-discovers the project from the workspace root (cwd). Optional override: `["mcp-server", "--project", "./subdir"]`.
+The server auto-discovers `adp.yaml` from **cwd** (set above) or from `ADP_PROJECT` in `env`. No `--project` in args needed. Optional override: `["mcp-server", "--project", "./subdir"]`.
 
 ### Claude Code CLI
 

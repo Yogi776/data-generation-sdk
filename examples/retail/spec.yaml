@@ -1,0 +1,1530 @@
+# Declarative retail dataset spec — dim_customer + dim_product + fact_order + fact_order_item
+#   adp apply-spec spec.yaml
+#   adp generate-data --rows 50000
+version: 1
+tables:
+  # ═══════════════════════════════════════════════════════════
+  # dim_customer
+  # ═══════════════════════════════════════════════════════════
+  - name: dim_customer
+    rows: 500000
+    columns:
+      - name: customer_id
+        type: uuid
+        primary_key: true
+
+      - name: customer_number
+        type: string
+
+      - name: first_name
+        type: string
+
+      - name: last_name
+        type: string
+
+      - name: email
+        type: string
+
+      - name: phone_number
+        type: string
+        null_ratio: 0.3
+
+      - name: date_of_birth
+        type: date
+        start: 1960-01-01
+        end: 2006-12-31
+
+      - name: age
+        type: int
+        min: 18
+        max: 66
+
+      - name: gender
+        type: string
+        values:
+          Male: 48
+          Female: 50
+          Other: 2
+
+      - name: loyalty_tier
+        type: string
+        values:
+          Standard: 60
+          Silver: 25
+          Gold: 12
+          Platinum: 3
+
+      - name: loyalty_points
+        type: int
+        mean: 320
+        std: 500
+        min: 0
+        max: 50000
+
+      - name: signup_date
+        type: date
+        start: 2020-01-01
+        end: 2026-06-01
+
+      - name: account_status
+        type: string
+        values:
+          Active: 88
+          Inactive: 10
+          Churned: 2
+
+      # hierarchical dependency: country -> state -> city (order matters)
+      - name: country
+        type: string
+        values:
+          India: 90
+          USA: 10
+
+      - name: state
+        type: string
+        values_by:
+          column: country
+          mapping:
+            India:
+              Maharashtra: 26
+              Karnataka: 20
+              Tamil Nadu: 15
+              Delhi: 13
+              Telangana: 13
+              Gujarat: 13
+            USA:
+              California: 30
+              Texas: 25
+              New York: 20
+              Florida: 15
+              Illinois: 10
+
+      - name: city
+        type: string
+        values_by:
+          column: state
+          mapping:
+            Maharashtra:
+              Mumbai: 55
+              Pune: 35
+              Nagpur: 10
+            Karnataka:
+              Bangalore: 82
+              Mysore: 18
+            Tamil Nadu:
+              Chennai: 75
+              Coimbatore: 25
+            Delhi:
+              New Delhi: 100
+            Telangana:
+              Hyderabad: 100
+            Gujarat:
+              Ahmedabad: 62
+              Surat: 38
+            California:
+              "Los Angeles": 40
+              "San Francisco": 35
+              "San Diego": 25
+            Texas:
+              Houston: 40
+              Dallas: 35
+              Austin: 25
+            "New York":
+              "New York City": 70
+              Buffalo: 30
+            Florida:
+              Miami: 45
+              Orlando: 35
+              Tampa: 20
+            Illinois:
+              Chicago: 80
+              Springfield: 20
+
+      - name: postal_code
+        type: string
+
+      - name: preferred_payment_method
+        type: string
+        values:
+          UPI: 35
+          Credit Card: 25
+          Debit Card: 20
+          Wallet: 12
+          COD: 8
+
+      - name: preferred_device
+        type: string
+        values:
+          Mobile: 65
+          Desktop: 28
+          Tablet: 7
+
+      - name: acquisition_source
+        type: string
+        values:
+          Organic: 30
+          Google: 25
+          Facebook: 20
+          Instagram: 15
+          Referral: 10
+
+      - name: total_orders
+        type: int
+        mean: 8
+        std: 10
+        min: 1
+        max: 200
+
+      - name: total_spent
+        type: float
+        mean: 15000
+        std: 22000
+        min: 100
+
+      - name: average_order_value
+        type: float
+        mean: 1800
+        std: 1500
+        min: 100
+
+      - name: last_order_date
+        type: date
+        start: 2024-01-01
+        end: 2026-06-30
+
+      - name: churn_risk
+        type: string
+        values:
+          Low: 55
+          Medium: 30
+          High: 15
+
+      - name: created_at
+        type: datetime
+        start: 2020-01-01
+        end: 2026-06-01
+
+  # ═══════════════════════════════════════════════════════════
+  # dim_product  — all 9 review fixes applied
+  # ═══════════════════════════════════════════════════════════
+  - name: dim_product
+    rows: 20000
+    columns:
+      - name: product_id
+        type: uuid
+        primary_key: true
+
+      - name: product_sku
+        type: string
+
+      # Fix 1 & 2 & 3: category → subcategory hierarchy, then product_name + brand by sub/cat
+      - name: category
+        type: string
+        values:
+          Electronics: 22
+          Apparel: 25
+          Home & Kitchen: 18
+          Beauty: 12
+          Sports: 10
+          Books: 8
+          Toys: 5
+
+      - name: subcategory
+        type: string
+        values_by:
+          column: category
+          mapping:
+            Electronics:
+              Smartphone: 22
+              Laptop: 18
+              Tablet: 12
+              Smartwatch: 10
+              Wireless Earbuds: 14
+              LED TV: 12
+              Bluetooth Speaker: 8
+              Camera: 4
+            Apparel:
+              T-Shirt: 18
+              Jeans: 14
+              Formal Shirt: 12
+              Kurti: 12
+              Dress: 10
+              Jacket: 8
+              Saree: 10
+              Sportswear: 9
+              Innerwear: 4
+              Ethnic Wear: 3
+            Home & Kitchen:
+              Cookware Set: 14
+              Pressure Cooker: 12
+              Kitchen Organizer: 12
+              Blender: 10
+              Water Purifier: 8
+              Air Fryer: 10
+              Microwave Oven: 8
+              Dining Set: 6
+              Bedding: 10
+              Home Decor: 6
+              Smart TV Stand: 4
+            Beauty:
+              Lipstick: 16
+              Foundation: 14
+              Skincare Kit: 16
+              Hair Care: 12
+              Perfume: 10
+              Nail Polish: 8
+              Makeup Brush Set: 8
+              Gift Set: 8
+              Sunscreen: 5
+              Serum: 3
+            Sports:
+              Running Shoes: 18
+              Cricket Bat: 12
+              Football: 10
+              Badminton Racket: 12
+              Fitness Band: 10
+              Gym Equipment: 12
+              Sports Bag: 8
+              Yoga Mat: 10
+              Tennis Racket: 5
+              Cycling Helmet: 3
+            Books:
+              Fiction: 22
+              Self-Help: 18
+              Business: 14
+              Academic: 12
+              Biography: 8
+              Children: 8
+              Mystery: 6
+              Romance: 6
+              Science: 4
+              History: 2
+            Toys:
+              Building Blocks: 18
+              Action Figure: 14
+              Board Game: 14
+              Puzzle: 12
+              Doll: 10
+              Remote Control: 10
+              Art & Craft: 10
+              Educational Toy: 8
+              Outdoor Toy: 4
+
+      # Fix 2: brand_name by category
+      - name: brand_name
+        type: string
+        values_by:
+          column: category
+          mapping:
+            Electronics:
+              Apple: 22
+              Samsung: 20
+              Sony: 12
+              LG: 10
+              OnePlus: 8
+              Xiaomi: 7
+              boAt: 6
+              JBL: 5
+              Fire-Boltt: 3
+              Noise: 3
+              Oppo: 2
+              Vivo: 2
+              Realme: 2
+            Apparel:
+              "Levi Strauss": 18
+              Nike: 16
+              Adidas: 14
+              Puma: 10
+              HRX: 9
+              "Van Heusen": 8
+              "Louis Philippe": 7
+              "Peter England": 6
+              Tanishq: 4
+              Manyavar: 4
+              FabIndia: 2
+              W: 2
+            "Home & Kitchen":
+              Prestige: 15
+              Pigeon: 14
+              Hawkins: 10
+              Wonderchef: 10
+              Butterfly: 9
+              Philips: 8
+              Havells: 7
+              Usha: 6
+              Crompton: 5
+              Bajaj: 5
+              KitchenAid: 4
+              Godrej: 4
+              Milton: 3
+            Beauty:
+              Lakme: 20
+              Maybelline: 18
+              Nykaa: 15
+              "M.A.C": 10
+              Sugar: 8
+              Mamaearth: 7
+              Plum: 5
+              "WOW Science": 4
+              Minimalist: 4
+              "Re'equil": 3
+              Biotique: 3
+              "Forest Essentials": 2
+              "Kama Ayurveda": 1
+            Sports:
+              Nike: 20
+              Adidas: 18
+              Puma: 14
+              Decathlon: 12
+              Asics: 8
+              "New Balance": 7
+              Columbia: 5
+              "Under Armour": 5
+              Reebok: 4
+              Sparx: 3
+              Yonex: 2
+              "Li-Ning": 2
+            Books:
+              Penguin: 18
+              HarperCollins: 15
+              Oxford: 12
+              Cambridge: 10
+              Wiley: 8
+              "McGraw-Hill": 7
+              Jaico: 6
+              Rupa: 5
+              Aleph: 4
+              Bloomsbury: 3
+              Faber: 3
+              Navayana: 3
+              Westland: 2
+              "Maple Press": 2
+              Fingerprint: 2
+            Toys:
+              Lego: 20
+              Mattel: 15
+              Hasbro: 14
+              "Fisher-Price": 10
+              "Hot Wheels": 8
+              Nerf: 7
+              "Play-Doh": 6
+              Bandai: 5
+              "Spin Master": 4
+              Barbie: 4
+              Funko: 3
+              Clementoni: 2
+              Ravensburger: 2
+
+      # Fix 1: product_name by subcategory — realistic product names
+      - name: product_name
+        type: string
+        values_by:
+          column: subcategory
+          mapping:
+            Smartphone:
+              "Apple iPhone 15 Pro": 20
+              "Samsung Galaxy S24 Ultra": 18
+              "Google Pixel 8 Pro": 12
+              "OnePlus 12": 10
+              "Xiaomi Redmi Note 13 Pro": 8
+              "Vivo X100 Pro": 7
+              "Oppo Find X7": 5
+              "Realme GT 5 Pro": 5
+              "iQOO 12": 5
+              "Motorola Edge 60 Pro": 5
+              "Nothing Phone 2a": 3
+              "Asus ROG Phone 8": 2
+            Laptop:
+              "Apple MacBook Air M3": 15
+              "Dell XPS 15": 12
+              "HP Pavilion 15": 10
+              "Lenovo ThinkPad E14": 10
+              "Asus VivoBook 16": 8
+              "Acer Swift 3": 8
+              "MSI Katana 15": 7
+              "Samsung Galaxy Book 4 Pro": 6
+              "Microsoft Surface Laptop 5": 5
+              "Huawei MateBook 16s": 5
+              "Infinix GT Book": 4
+              "RedmiBook Pro 16": 3
+              "Lenovo IdeaPad Gaming 3": 3
+              "HP Envy x360": 2
+              "Asus ProArt Studiobook": 2
+            Tablet:
+              "Apple iPad Air M2": 20
+              "Samsung Galaxy Tab S9": 18
+              "Lenovo Tab P12": 10
+              "Xiaomi Pad 6": 10
+              "Microsoft Surface Pro 9": 12
+              "OnePlus Pad": 8
+              "Realme Pad Mini": 7
+              "Huawei MatePad 11": 8
+              "Nokia T21": 4
+              "Honor Pad 8": 3
+            Smartwatch:
+              "Apple Watch Ultra 2": 18
+              "Samsung Galaxy Watch 6": 20
+              "Google Pixel Watch 2": 10
+              "boAt Wave Call Pro": 12
+              "Fire-Boltt Phoenix": 8
+              "Noise ColorFit Pro 5": 10
+              "Amazfit GTR 4": 7
+              "Samsung Galaxy Watch 5": 8
+              "Fitbit Sense 2": 4
+              "Garmin Venu 3": 3
+            "Wireless Earbuds":
+              "Apple AirPods Pro 2": 22
+              "Samsung Galaxy Buds 2 Pro": 18
+              "Sony WF-1000XM5": 14
+              "boAt Airdopes 441 Pro": 12
+              "OnePlus Buds Pro 3": 8
+              "JBL Tune Flex": 8
+              "Nothing Ear 2": 6
+              "Xiaomi Buds 4 Pro": 5
+              "Realme Buds Air 5 Pro": 4
+              "Oppo Enco X3": 3
+            LED TV:
+              "Samsung 55-inch Crystal 4K": 15
+              "LG 55-inch OLED evo": 18
+              "Sony Bravia 55-inch XR": 12
+              "OnePlus 50-inch Y1S Pro": 10
+              "Xiaomi Mi A Series 50-inch": 10
+              "TCL 55-inch C6": 8
+              "Hisense 55-inch U6": 7
+              "Vu 55-inch Cinema": 6
+              "MarQ 55-inch Fast": 5
+              "Samsung 65-inch Neo QLED": 9
+            "Bluetooth Speaker":
+              "JBL Flip 6": 20
+              "boAt Stone 350": 15
+              "Sony SRS-XB13": 12
+              "Marshall Emberton II": 10
+              "JBL Charge 5": 14
+              "Ultimate Ears Wonderboom 3": 8
+              "Bose SoundLink Flex": 8
+              "Mifa A30": 5
+              "F&D T-200X": 4
+              "Zebra ZBS-X2": 4
+            Camera:
+              "Canon EOS R6 Mark II": 18
+              "Sony A7 IV": 16
+              "Nikon Z8": 14
+              "Fujifilm X-T5": 12
+              "GoPro Hero 12 Black": 14
+              "Canon EOS R50": 10
+              "Sony ZV-E1": 8
+              "DJI Osmo Action 4": 8
+            T-Shirt:
+              "HRX Performance T-Shirt": 20
+              "Nike Dri-FIT Urban": 18
+              "Adidas Essential": 15
+              "Levi'surban Graphic Tee": 12
+              "Puma Active": 10
+              "Van Heusen Cotton Crew": 8
+              "Louis Philippe Sport": 7
+              "Allen Solly Polo": 6
+              "Tommy Hilfiger Classic": 4
+            Jeans:
+              "Levi's 511 Slim Fit": 22
+              "Levi's 512 Slim Taper": 16
+              "Jack & Jones Slim": 14
+              "Spykar Cargo Jeans": 12
+              " Pepe Jeans London": 10
+              "Lee Cooper Regular": 8
+              "Wrangler Texas Stretch": 8
+              "Flying Machine Fastrack": 6
+              "Abercrombie & Fitch": 4
+            "Formal Shirt":
+              "Louis Philippe Shirt": 18
+              "Peter England Executive": 16
+              "Van Heusen Wrinkle-Free": 15
+              "Allen Solly Semi-Form": 14
+              "Blackberrys Slim Fit": 12
+              "John Players No-Bucket": 10
+              "Raymond Trim Fit": 9
+              "Charles Vacheron Classic": 6
+            Kurti:
+              "Libas Cotton Kurti": 18
+              "W Saree Shop Anarkali": 14
+              "Rangmanch by Pantaloons": 12
+              "Kalini Cotton Kurti": 12
+              "Saree Shop Fusion": 10
+              "Auria Festive Kurti": 8
+              "Kalyani Creations": 8
+              "Sanguine Ethnic": 6
+              "Rajshree Trendz": 6
+              "Flavyr Ethnic": 6
+            Dress:
+              "Sassafras Midi Dress": 18
+              "Mango W Day Dress": 14
+              "Zara Square Neck": 12
+              "H&M Floral Maxi": 12
+              "Valentino Gown": 10
+              "Dressfolk Summer": 10
+              "Urbanic Wrap": 8
+              "Sassafras Mini": 6
+              "Tokyo Talkies Bodycon": 6
+              "Mast & Harbour": 4
+            Jacket:
+              "Nike Sportswind Jacket": 20
+              "Adidas Originals": 16
+              "Levi's Trucker Jacket": 14
+              "U.S. Polo Assn.": 12
+              "Tommy Hilfiger Bomber": 12
+              "The North Face 1996": 10
+              "Columbia Ascender": 8
+              "Puma Street Jacket": 8
+            Saree:
+              "Silk Mark Kanjivaram": 18
+              "Nandini Sarees Banarasi": 16
+              "Triveni Online Bandhani": 12
+              "Saree Shop Crepe": 12
+              "Libas Georgette": 10
+              "Rangshree Art Silk": 8
+              "Auria Chiffon": 6
+              "Sanguine Banarasi": 6
+              "Kalini Pure Cotton": 6
+              "Mumtaz Chanderi": 6
+            Sportswear:
+              "Nike Running Shorts": 20
+              "Adidas Training Tee": 16
+              "Puma Activs": 14
+              "HRX Performance": 12
+              "Decathlon Quechua Hike": 10
+              "Reebok CrossFit": 10
+              "Under Armour Tech": 10
+              "Asics Running": 8
+            Innerwear:
+              "Jockey Stay Fresh": 25
+              "Hanes Comfort": 20
+              "Triumph Minimizer": 15
+              "Enamor Cotton": 18
+              "Clovia Soft": 14
+              "Dollar Feels": 8
+            "Ethnic Wear":
+              "Manyavar Kurta Set": 20
+              "Peter England Sherwani": 16
+              "Van Heusen Indo-West": 14
+              "Louis Philippe Festive": 12
+              "Allen Solly Indo": 10
+              "Raymond Indo": 10
+              "John Players Ethnic": 8
+              "Ketch Festive": 6
+              "Rajshree Kurta": 4
+            "Cookware Set":
+              "Prestige Omega Deluxe": 20
+              "Pigeon Stainless Steel": 18
+              "Hawkins Futura": 16
+              "Wonderchef Nutria": 12
+              "Butterfly Smart": 10
+              "Vinod Platinum": 8
+              "BergHOFF Gemini": 8
+              "Supreme Kitchenware": 8
+            "Pressure Cooker":
+              "Prestige Iris 5L": 22
+              "Pigeon Easy Clean": 18
+              "Hawkins Contura 3L": 16
+              "Butterfly Compact": 14
+              "Wonderchef Dinner": 12
+              "Vinod Premium 5L": 10
+              "Faber 5L": 8
+            "Kitchen Organizer":
+              "Prestige Kitchen Trolley": 20
+              "Welier Refrigerator": 16
+              "Home Slicker": 14
+              "Amazon Basics Pantry": 14
+              "Space Solutions": 12
+              "Nesthobby Set": 10
+              "Eurokit Pantry": 8
+              "Deli Smart Storage": 6
+            Blender:
+              "Philips HL 7756": 22
+              "Prestige Remix 750W": 18
+              "Havells Adore": 14
+              "Bosch MMB404": 12
+              "Panasonic MX-AC400": 10
+              "Crompton Greaves Ambr": 8
+              "Bajaj Rexxit": 8
+              "KitchenAid K400": 8
+            "Water Purifier":
+              "Aquaguard Aquasure": 20
+              "Kent Grand Plus": 18
+              "Pureit Ultimate": 14
+              "LG WW176": 12
+              "Samsung AQ100": 10
+              "Voltas Beko": 8
+              "HUL Pureit Copper+": 10
+              "Bluefinger RO": 8
+            "Air Fryer":
+              "Philips HD9252": 22
+              "Prestige 360 Duty": 18
+              "Havells Atta kneader": 2
+              "Kent 16002": 14
+              "Pigeon LED Digital": 12
+              "Lazer M1801": 10
+              "Crowded Ceria": 8
+              "Cuisinart DTO": 6
+              "Godrej No Oil": 8
+            "Microwave Oven":
+              "LG 28L Convection": 20
+              "Samsung 28L Grill": 16
+              "IFB 30L Convection": 16
+              "Panasonic 30L NN": 14
+              "Godrej 30L Solo": 10
+              "Haier 25L Solo": 8
+              "Whirlpool 30L": 8
+              "Bosch Serie 4": 8
+            "Dining Set":
+              "Nilkamal Extendale": 18
+              "Supreme Home Dining": 16
+              "Angela 6-Seater": 14
+              "Perfette Dining": 12
+              "Artistic 6-Seater": 10
+              "Hometown Marco": 10
+              "Urban Furniture": 8
+              "Limex Royal": 8
+              "Durian Dining Set": 4
+            Bedding:
+              "Spire 144TC Queen": 20
+              "Livpure Hotel": 16
+              "Claustra 200TC": 14
+              "Spaces Premium Bedsheet": 12
+              "Cortina 180TC": 10
+              "Royal Home Bedding": 8
+              "Kotton Culture": 8
+              "Bombay Dyeing Bedsheet": 2
+            "Home Decor":
+              "Raj Holiday Vase": 16
+              "Exotic Art Frame": 14
+              "Coraller Wall Mirror": 14
+              "Suncraft Brass": 12
+              "Pink Tag Design": 10
+              "Star Home Co": 10
+              "The Home Fix": 8
+              "Raj Holiday": 8
+              "Home Center": 8
+            "Smart TV Stand":
+              "LED.my Furniture": 20
+              "Furnipart Wall Mount": 18
+              "Urban Ladder TV Stand": 14
+              "Candid Corner": 12
+              "Green Soul TV Console": 10
+              "Metallica TV Swivel": 8
+              "Vemont Wall Shelf": 8
+            Lipstick:
+              "Maybelline Superstay": 20
+              "Lakme Absolute Matte": 18
+              "M.A.C Retro": 14
+              "Sugar Ace of Face": 12
+              "Nykaa Matte Lipstick": 10
+              "Huda Beauty Pillow": 8
+              "Charlotte Tilbury": 6
+              "M.A.C Ruby Woo": 6
+              "Lakme Crimson Jar": 6
+            Foundation:
+              "Maybelline Fit Me": 22
+              "Lakme Absolute Skin": 18
+              "M.A.C Studio Fix": 14
+              "Nykaa All Day": 12
+              "Huda Beauty Faux": 10
+              "L'Oreal Infallible": 8
+              "Bobbi Brown Skin": 6
+              "NARS Sheer": 6
+              "Estee Lauder DW": 4
+            "Skincare Kit":
+              "Mamaearth Vitamin C": 20
+              "Minimalist 10% Niacinamide": 16
+              "The Ordinary Buffet": 14
+              "Plum Body Shop": 12
+              "Kama Ayurveda Ritual": 10
+              "Forest Essentials B": 8
+              "Re'equil Peptide": 8
+              "Biotique Bio": 6
+              "WOW Skin Science": 6
+            "Hair Care":
+              "L'Oreal Paris Elvive": 20
+              "Mamaearth Onion Hair": 18
+              "Tresemme Keratin": 14
+              "Pantene Pro-V": 12
+              "Head & Shoulders": 10
+              "Dove Daily Shine": 8
+              "Kayleaf Hair": 6
+              "Biotique Bio Kelp": 6
+              "Forest Essentials Hair": 4
+            Perfume:
+              "Chanel Coco Mademoiselle": 16
+              "Dior J'adore": 14
+              "Gucci Bloom": 12
+              "Davidoff Cool Water": 12
+              "Calvin Klein One": 10
+              "Hugo Boss Bottled": 8
+              "Yves Saint Black": 8
+              "Burberry Her": 6
+              "Carolina Herrera Good": 6
+              "Tom Ford Black": 4
+              "Lattafa Anfar": 4
+            "Nail Polish":
+              "M.A.C Nail Lacquer": 18
+              "OPI Infinite Shine": 16
+              "Essence Gel Look": 14
+              "Maybelline Color Show": 12
+              "Lakme Color Crush": 12
+              "Sugar Beauty": 10
+              "Sally Hansen Hard": 8
+              "Revlon ColorStay": 6
+              "Zoya Nail": 4
+            "Makeup Brush Set":
+              "M.A.C 12-Piece": 20
+              "Real Techniques Set": 18
+              "Nykaa E-Commerce": 16
+              "Lakme Absolute": 14
+              "Huda Beauty Brush": 12
+              "Sonia Kashiwsk": 8
+              "BareMinerals": 6
+              "Sigma Beauty": 6
+            "Gift Set":
+              "Nykaa Beauty Box": 20
+              "M.A.C Lip Combo": 16
+              "Sephora Skincare": 14
+              "Huda Beauty Trio": 12
+              "Forest Essentials Set": 10
+              "Bath & Body Works": 10
+              "L'Occitane Box": 8
+              "Kama Ayurveda": 6
+              "Armani My Way": 4
+            Sunscreen:
+              "La Shield SPF 50": 20
+              "Re'equil Gold": 16
+              "Mamaearth Uvin": 16
+              "Minimalist SPF 50": 14
+              "Bioderma Photoderm": 12
+              "Neutrogena Ultra Sheer": 10
+              "Coppertone Sport": 6
+              "Lotus Herbals Sunscreen": 4
+              "Aloe Vera Gel": 4
+            Serum:
+              "Minimalist Niacinamide 10%": 20
+              "The Ordinary Buffet": 18
+              "Mamaearth Vitamin C": 16
+              "Hyaluronic Acid SkinCeuticals": 12
+              "Paula's Choice BHA": 10
+              "Sunday Riley Good Genes": 8
+              "SK-II Facial": 6
+              "Estee Lauder ANR": 6
+              "Olay Regenerist": 4
+            "Running Shoes":
+              "Nike Air Zoom Pegasus": 22
+              "Adidas Ultraboost Light": 18
+              "Asics Gel-Kayano 30": 14
+              "New Balance Fresh Foam": 12
+              "Puma Velocity Nitro 2": 10
+              "Under Armour HOVR": 8
+              "Skechers Maxroad 5": 6
+              "Brooks Ghost 15": 6
+              "Reebok ZigTech": 4
+            "Cricket Bat":
+              "SG Crown Gold": 22
+              "SS Heritage": 18
+              "GM Diamond": 14
+              "Kookaburra Kahuna": 12
+              "BD English Willow Bat": 10
+              "Spartan Mr. Cock": 8
+              "Bas Vampire": 6
+              "RF 1000 Willow": 6
+              "Duke Ton": 4
+            Football:
+              "Adidas Orbital": 22
+              "Nike Flight": 20
+              "Puma Future Play": 16
+              "Kipsta Inter": 12
+              "Nivia Storm": 10
+              "Decathlon Kipsta": 10
+              "Mikasa Ce": 6
+              "Torch F50": 4
+            "Badminton Racket":
+              "Yonex Astrox 100": 20
+              "Li-Ning G-Force": 16
+              "Victor Thruster": 14
+              "B-head Custom": 12
+              "Apacs Exciter": 10
+              "Kawasaki C1": 8
+              "Fleet B-660": 6
+              "Cosco Dura": 6
+              "Flymax Infini": 8
+            "Fitness Band":
+              "boAt Rs. 2L": 20
+              "Fitbit Charge 6": 18
+              "Noise ColorFit Pro 4": 16
+              "Samsung Galaxy Fit 3": 14
+              "Amazfit Band 7": 12
+              "Realme Band 2": 8
+              "Xiaomi Mi Band 8": 8
+              "Huawei Band 8": 4
+            "Gym Equipment":
+              "HRX Dumbbell Set": 18
+              "Decathlon Domyos": 16
+              "ProForm Cardio": 12
+              "Amazon Basics Set": 12
+              "K lifemate 20kg": 10
+              "Yoga Girl 1kg": 8
+              "Sportilia 30kg": 8
+              "Shakti Vikrant": 8
+              "Cockatoo AB": 4
+              "MaxPRO Weight": 4
+            "Sports Bag":
+              "Nike Brasilia": 22
+              "Adidas Team Ball": 18
+              "Puma ST": 14
+              "Under Armour Undeniable": 12
+              "Decathlon Quechua": 10
+              "Reebok Active": 8
+              "SS Cricket Kit": 8
+              "Skullcandy": 4
+              "Lenovo": 4
+            "Yoga Mat":
+              "Yoga Design Lab": 22
+              "Liforme Yoga Mat": 18
+              "Gaiam Essentials": 14
+              "Manduka PRO": 12
+              "Hatha Yoga Mat": 10
+              "Ritual Premium Mat": 8
+              "Decathlon Domyos": 8
+              "PROWIN Mat": 6
+              "Fitkit Ecorco": 2
+            "Tennis Racket":
+              "Wilson Blade 104": 20
+              "Babolat Pure Drive": 18
+              "Head Ti.S6": 14
+              "Prince Textreme": 12
+              "Yonex VCore 100": 12
+              "Tecnifibre T-Fight": 10
+              "Dunlop CX": 8
+              "Volkl V-Feel": 6
+            "Cycling Helmet":
+              "Vgeby Racing Helmet": 20
+              "Nisbi Thrust": 16
+              "Urbanic Helmet": 14
+              "Viktos Krywp": 12
+              "Fox Speedframe": 10
+              "Bell Draft": 10
+              "Lazer Compact": 8
+              "Giro Register": 6
+              " Giro MIPS": 4
+            Fiction:
+              "The Alchemist - Paulo Coelho": 15
+              "Atomic Habits - James Clear": 12
+              "1984 - George Orwell": 10
+              "To Kill a Mockingbird - Harper Lee": 8
+              "The Great Gatsby - F. Scott Fitzgerald": 8
+              "Sapiens - Yuval Noah Harari": 10
+              "Norwegian Wood - Haruki Murakami": 7
+              "The White Tiger - Aravind Adiga": 8
+              "Train to Pakistan - Khushwant Singh": 5
+              "The Palace of Illusions - Chitra Banerjee": 5
+              "Life of Pi - Yann Martel": 6
+              "The Kite Runner - Khaled Hosseini": 6
+            "Self-Help":
+              "Think and Grow Rich - Napoleon Hill": 14
+              "Rich Dad Poor Dad - Robert Kiyosaki": 12
+              "The 7 Habits - Stephen Covey": 10
+              "How to Win Friends - Dale Carnegie": 10
+              "Atomic Habits - James Clear": 8
+              "Deep Work - Cal Newport": 8
+              "The Subtle Art - Mark Manson": 8
+              "Girlboss - Sophia Amoruso": 6
+              "Zero to One - Peter Thiel": 6
+              "The Psychology of Money": 8
+              "Ikigai - Hector Garcia": 6
+              "A Monk Who Sold His Ferrari": 4
+            Business:
+              "Zero to One - Peter Thiel": 12
+              "The Lean Startup - Eric Ries": 10
+              "Good to Great - Jim Collins": 10
+              "Blue Ocean Strategy - Chan Kim": 8
+              "Start With Why - Simon Sinek": 8
+              "The Hard Thing About Hard Things": 8
+              "The Innovator's Dilemma - Clayton Christensen": 8
+              "Purple Cow - Seth Godin": 6
+              "Crossing the Chasm - Geoffrey Moore": 6
+              "The Personal MBA - Josh Kaufman": 6
+              "E-Myth Revisited - Michael Gerber": 6
+              "Playing to Win - A.G. Lafley": 4
+              "Only the Paranoid Survive - Andy Grove": 4
+              "The One Device - Brian Merchant": 4
+            Academic:
+              "Introduction to Algorithms - Cormen": 16
+              "Operating Systems - Silberschatz": 12
+              "Database System Concepts - Korth": 10
+              "Computer Networks - Tanenbaum": 10
+              "Compilers - Aho Sethi": 8
+              "Artificial Intelligence - Russell & Norvig": 8
+              "Principles of Economics - Mankiw": 8
+              "Physics for Scientists - Serway": 6
+              "Organic Chemistry - Morrison & Boyd": 6
+              "Campbell Biology": 6
+              "Calculus - James Stewart": 6
+              "Linear Algebra - Gilbert Strang": 4
+            Biography:
+              "Wings of Fire - A.P.J. Abdul Kalam": 18
+              "Long Walk to Freedom - Nelson Mandela": 12
+              "Steve Jobs - Walter Isaacson": 12
+              "The Diary of a Young Girl - Anne Frank": 10
+              "Einstein: His Life and Universe - Walter Isaacson": 8
+              "Becoming - Michelle Obama": 8
+              "My Experiments with Truth - M.K. Gandhi": 10
+              "Alexander the Great - Robin Lane Fox": 6
+              "Elon Musk - Ashlee Vance": 6
+              "Michelle Obama - Becoming": 4
+              "Man's Search for Meaning - Viktor Frankl": 6
+            Children:
+              "Harry Potter Complete Set - J.K. Rowling": 18
+              "The Diary of a Wimpy Kid - Jeff Kinney": 14
+              "Percy Jackson - Rick Riordan": 12
+              "Charlotte's Web - E.B. White": 8
+              "The Cat in the Hat - Dr. Seuss": 8
+              "Matilda - Roald Dahl": 8
+              "Amulet Series - Kazu Kibuishi": 8
+              "Diary of a Wimpy Kid": 8
+              "Dog Man - Dav Pilkey": 6
+              "Wings of Fire Junior": 6
+              "The Very Hungry Caterpillar - Eric Carle": 4
+            Mystery:
+              "The Da Vinci Code - Dan Brown": 16
+              "Gone Girl - Gillian Flynn": 12
+              "The Girl with the Dragon Tattoo - Stieg Larsson": 10
+              "And Then There Were None - Agatha Christie": 10
+              "Sherlock Holmes - Arthur Conan Doyle": 12
+              "Murder on the Orient Express - Agatha Christie": 8
+              "The Woman in the Window - A.J. Finn": 6
+              "Big Little Lies - Liane Moriarty": 6
+              "The Silent Patient - Alex Michaelides": 8
+              "The Thursday Murder Club - Richard Osman": 6
+              "The Moonstone - Wilkie Collins": 4
+              "Invisible Man - H.G. Wells": 2
+            Romance:
+              "Pride and Prejudice - Jane Austen": 16
+              "Me Before You - Jojo Moyes": 12
+              "The Notebook - Nicholas Sparks": 10
+              "One Day - David Nicholls": 8
+              "It Ends With Us - Colleen Hoover": 12
+              "The Hating Game - Sally Thorne": 4
+              "The Time Traveler's Wife - Audrey Niffenegger": 8
+              "The Rosie Project - Graeme Simsion": 8
+              "Bridget Jones's Diary - Helen Fielding": 6
+              "Love in the Time of Cholera - Gabriel Garcia Marquez": 6
+              "A Walk to Remember - Nicholas Sparks": 4
+            Science:
+              "A Brief History of Time - Stephen Hawking": 16
+              "The Selfish Gene - Richard Dawkins": 12
+              "Sapiens - Yuval Noah Harari": 10
+              "Cosmos - Carl Sagan": 10
+              "The Gene - Siddhartha Mukherjee": 8
+              "Origin of Species - Charles Darwin": 8
+              "Astrophysics for People - Neil deGrasse Tyson": 8
+              "The Brain - David Eagleman": 6
+              "Homo Deus - Yuval Noah Harari": 6
+              "The Emperor of All Maladies - Siddhartha Mukherjee": 4
+              "The Fabric of the Cosmos - Brian Greene": 4
+            History:
+              "Sapiens - Yuval Noah Harari": 16
+              "Guns Germs and Steel - Jared Diamond": 12
+              "The Wright Brothers - David McCullough": 8
+              "The Diary of a Young Girl - Anne Frank": 8
+              "India After Gandhi - Ramachandra Guha": 10
+              "The Discovery of India - Jawaharlal Nehru": 8
+              "The Argumentative Indian - Amartya Sen": 6
+              "Ancient India - R.C. Majumdar": 6
+              "World History - Niall Ferguson": 6
+              "SPQR - Mary Beard": 4
+              "A History of Ancient Rome": 4
+              "The Mughal Empire - Satish Chandra": 4
+              "Makers of Modern India - Ramachandra Guha": 4
+            "Building Blocks":
+              "Lego City Police Station": 18
+              "Lego Technic Ferrari": 16
+              "Lego Architecture Eiffel Tower": 14
+              "Lego Star Wars Millennium Falcon": 16
+              "Mega Bloks First Builders": 12
+              "Cobi World War": 8
+              "Banpresto Dragon Ball": 6
+              "Playmobil Country Farm": 6
+              "Kre-O Transformers": 4
+            "Action Figure":
+              "Hasbro Marvel Legends": 20
+              "Mattel DC Multiverse": 16
+              "Bandai S.H. Figuarts": 14
+              "NECA Teenage Mutant Ninja Turtles": 10
+              "Funko Pop! Marvel": 12
+              "Hot Toys Iron Man": 10
+              "Hasbro Power Rangers": 8
+              "Mattel Masters of the Universe": 6
+              "Star Wars Black Series": 4
+            "Board Game":
+              "Catan - Strategy Game": 20
+              "Monopoly Classic - Hasbro": 18
+              "Scrabble - Mattel": 14
+              "Ticket to Ride - Days of Wonder": 14
+              "Pandemic - Z-Man Games": 12
+              "Codenames - Czech Games": 12
+              "Dixit - Libellud": 8
+              "Uno - Mattel": 8
+              "Risk - Hasbro": 8
+              "Battleship - Hasbro": 6
+              "Clue - Hasbro": 6
+              "Axis & Allies": 4
+            Puzzle:
+              "Ravensburger 1000pc Landscape": 22
+              "Clementoni 1000pc Fine Art": 16
+              "Educa 1500pc World Map": 12
+              "Jumbo 500pc Fair": 10
+              "Cast Puzzle Collection": 10
+              "Rubik's Cube 3x3": 14
+              "Hasbro Twister": 6
+              "Melissa & Doug 100pc": 6
+              "Buffalo Games 500pc": 4
+            Doll:
+              "Barbie Dreamhouse Adventures": 20
+              "American Girl Doll": 16
+              "Bratz Yasmine": 12
+              "Monster High Cleo": 10
+              "Polly Pocket Tiny": 10
+              "Molly & Mack": 8
+              "L.O.L. Surprise! Doll": 14
+              "Cry Baby Doll": 6
+              "Rainbow High Doll": 4
+            "Remote Control":
+              "Hot Wheels Battling Packs": 18
+              "Lego Technic Control": 14
+              "Syma S106 Helicopter": 12
+              "MJX B3 Quadcopter": 10
+              "Revell Control": 8
+              "Team Associated": 6
+              "Traxxas Stampede": 8
+              "Nikko RC Car": 6
+              "Heng Long T-34": 4
+            "Art & Craft":
+              "Copic Sketch Marker Set": 18
+              "Faber-Castell 150": 16
+              "Bristol Board Pad": 12
+              "Royal & Langnickel": 10
+              "Arteza Watercolor": 10
+              "Simbark Pen Set": 8
+              "Mohan Clay Set": 6
+              "Prang Watercolor": 6
+              "Fiskars Tool Kit": 6
+              "Derwent Drawing Set": 8
+            "Educational Toy":
+              "Osmo Genius Starter Kit": 20
+              "LeapFrog LeapStart": 16
+              "VTech KidiZoom": 14
+              "Little Mechanic Set": 10
+              "Melissa & Doug Lacing": 10
+              "ThinkFun Math Dice": 8
+              "Snap Circuits Jr.": 8
+              "Botley 2.0": 6
+              "Laser Pegs 12-in-1": 4
+              "Play-Doh Kitchen": 4
+            "Outdoor Toy":
+              "Lifetime Wave Disc Golf": 18
+              "Nerf Modulus ECS-10": 14
+              "Skip Hop Water Table": 12
+              "Step2 Grand Canyon": 10
+              "Little Tikes 8ft Trampoline": 12
+              "Radio Flyer Wagon": 8
+              "Kidoozie Sprinkle": 6
+              "Moonshot Jr. T-ball": 6
+              "PlasmaCar": 4
+              "Razor A Kick Scooter": 4
+              "Crayola Outdoor": 4
+              "BIC Garden Tee": 2
+
+      # unit_price by category — discrete price tiers (values_by is categorical only)
+      - name: unit_price
+        type: float
+        values_by:
+          column: category
+          mapping:
+            Electronics:
+              "79999": 10
+              "49999": 20
+              "29999": 25
+              "14999": 25
+              "7999": 20
+            Apparel:
+              "2999": 15
+              "1999": 25
+              "1499": 25
+              "999": 20
+              "599": 15
+            "Home & Kitchen":
+              "24999": 8
+              "14999": 12
+              "9999": 18
+              "4999": 22
+              "2999": 20
+              "1499": 20
+            Beauty:
+              "2999": 10
+              "1499": 20
+              "999": 25
+              "599": 25
+              "299": 20
+            Sports:
+              "9999": 10
+              "4999": 18
+              "2999": 25
+              "1499": 27
+              "799": 20
+            Books:
+              "1499": 10
+              "999": 20
+              "699": 25
+              "499": 25
+              "299": 20
+            Toys:
+              "4999": 12
+              "2999": 18
+              "1499": 25
+              "999": 25
+              "499": 20
+        expr: CAST(unit_price AS DOUBLE)
+
+      # cost_price derived from unit_price — cast required (values_by stores strings)
+      - name: cost_price
+        type: float
+        expr: CAST(unit_price AS DOUBLE) * 0.50
+
+      # weight_kg — global distribution (values_by is categorical-only)
+      - name: weight_kg
+        type: float
+        mean: 1.5
+        std: 3.0
+        min: 0.02
+        max: 30.0
+
+      - name: is_active
+        type: bool
+        values:
+          "true": 90
+          "false": 10
+
+      - name: stock_quantity
+        type: int
+        mean: 150
+        std: 200
+        min: 0
+        max: 5000
+
+      - name: reorder_level
+        type: int
+        mean: 30
+        std: 20
+        min: 5
+        max: 200
+
+      - name: lead_time_days
+        type: int
+        mean: 7
+        std: 5
+        min: 1
+        max: 30
+
+      # return_rate — global with apparel-skewed mean
+      - name: return_rate
+        type: float
+        mean: 0.06
+        std: 0.05
+        min: 0.0
+        max: 0.25
+
+      # Fix 7: total_reviews — tightened realistic ranges
+      - name: total_reviews
+        type: int
+        mean: 180
+        std: 400
+        min: 0
+        max: 5000
+
+      # Fix 8: launch_date — end capped at 2026-07-01, no future dates
+      - name: launch_date
+        type: date
+        start: 2018-01-01
+        end: 2026-07-01
+
+      - name: created_at
+        type: datetime
+        start: 2018-01-01
+        end: 2026-07-01
+
+  # ═══════════════════════════════════════════════════════════
+  # fact_order
+  # ═══════════════════════════════════════════════════════════
+  - name: fact_order
+    rows: 3000000
+    joins:
+      - name: dim_customer
+        relationship: many_to_one
+        sql: "{TABLE.customer_id} = {dim_customer.customer_id}"
+    columns:
+      - name: order_id
+        type: uuid
+        primary_key: true
+
+      - name: order_number
+        type: string
+
+      - name: customer_id
+        type: uuid
+
+      - name: order_date
+        type: datetime
+        start: 2025-01-01
+        end: 2026-06-30
+
+      - name: order_status
+        type: string
+        values:
+          Delivered: 75
+          Shipped: 10
+          Processing: 8
+          Cancelled: 5
+          Returned: 2
+
+      - name: payment_date
+        type: datetime
+        start: 2025-01-01
+        end: 2026-06-30
+        after:
+          column: order_date
+          min_minutes: 1
+          max_minutes: 180
+
+      - name: shipment_date
+        type: datetime
+        start: 2025-01-01
+        end: 2026-06-30
+        after:
+          column: order_date
+          min_minutes: 360
+          max_minutes: 2880
+
+      - name: delivery_date
+        type: datetime
+        start: 2025-01-02
+        end: 2026-06-30
+        after:
+          column: shipment_date
+          min_minutes: 1440
+          max_minutes: 10080
+
+      - name: payment_method
+        type: string
+        values:
+          UPI: 38
+          Credit Card: 24
+          Debit Card: 18
+          Wallet: 10
+          COD: 10
+
+      - name: payment_status
+        type: string
+        values:
+          Paid: 88
+          Pending: 6
+          Failed: 3
+          Refunded: 3
+
+      - name: subtotal
+        type: float
+        mean: 1800
+        std: 1500
+        min: 100
+
+      - name: discount_amount
+        type: float
+        mean: 120
+        std: 200
+        min: 0
+
+      - name: coupon_code
+        type: string
+        null_ratio: 0.6
+
+      - name: tax_amount
+        type: float
+        expr: subtotal * 0.18
+
+      - name: shipping_charge
+        type: float
+        values:
+          "49.0": 50
+          "99.0": 30
+          "149.0": 15
+          "0.0": 5
+
+      - name: total_amount
+        type: float
+        expr: subtotal + tax_amount + shipping_charge - discount_amount
+
+      - name: refund_amount
+        type: float
+        expr: CASE WHEN order_status = 'Returned' THEN total_amount ELSE 0.0 END
+        null_ratio: 0.93
+
+      - name: refund_reason
+        type: string
+        values:
+          damaged: 30
+          wrong_item: 25
+          not_as_described: 25
+          size_issue: 15
+          late_delivery: 5
+        null_unless: order_status = 'Returned'
+
+      - name: shipping_provider
+        type: string
+        values:
+          Delhivery: 28
+          BlueDart: 22
+          Ekart: 22
+          DTDC: 15
+          XpressBees: 13
+
+      - name: fulfillment_type
+        type: string
+        values:
+          Standard: 65
+          Express: 22
+          "Same Day": 13
+
+      - name: warehouse_location
+        type: string
+        values:
+          Mumbai: 25
+          Delhi: 22
+          Bangalore: 20
+          Hyderabad: 18
+          Chennai: 15
+
+      - name: customer_rating
+        type: int
+        values:
+          "5": 45
+          "4": 28
+          "3": 12
+          "2": 8
+          "1": 7
+        null_ratio: 0.25
+
+      - name: device_type
+        type: string
+        values:
+          Android: 52
+          iPhone: 28
+          Desktop: 15
+          Tablet: 5
+
+      - name: source_channel
+        type: string
+        values:
+          "Mobile App": 50
+          Website: 35
+          Marketplace: 15
+
+      - name: marketing_campaign
+        type: string
+        values:
+          none: 55
+          summer_sale: 15
+          diwali_2025: 15
+          new_user_30: 10
+          loyalty_bonus: 5
+
+      - name: ip_address
+        type: string
+
+      - name: created_at
+        type: datetime
+        start: 2025-01-01
+        end: 2026-06-30
+
+  # ═══════════════════════════════════════════════════════════
+  # fact_order_item
+  # ═══════════════════════════════════════════════════════════
+  - name: fact_order_item
+    rows: 10000000
+    joins:
+      - name: fact_order
+        relationship: many_to_one
+        sql: "{TABLE.order_id} = {fact_order.order_id}"
+      - name: dim_product
+        relationship: many_to_one
+        sql: "{TABLE.product_id} = {dim_product.product_id}"
+      - name: dim_customer
+        relationship: many_to_one
+        sql: "{TABLE.customer_id} = {dim_customer.customer_id}"
+    columns:
+      - name: order_item_id
+        type: uuid
+        primary_key: true
+
+      - name: order_id
+        type: uuid
+
+      - name: customer_id
+        type: uuid
+
+      - name: product_id
+        type: uuid
+
+      - name: quantity
+        type: int
+        mean: 1.8
+        std: 1.2
+        min: 1
+        max: 20
+
+      - name: unit_price
+        type: float
+        mean: 1200
+        std: 2000
+        min: 49
+        max: 150000
+
+      - name: discount_per_item
+        type: float
+        mean: 60
+        std: 120
+        min: 0
+
+      - name: item_subtotal
+        type: float
+        expr: unit_price * quantity - discount_per_item * quantity
+
+      - name: item_tax
+        type: float
+        expr: item_subtotal * 0.18
+
+      - name: item_total
+        type: float
+        expr: item_subtotal + item_tax
+
+      - name: is_returned
+        type: bool
+        values:
+          "false": 93
+          "true": 7
+
+      - name: return_reason
+        type: string
+        values:
+          damaged: 30
+          wrong_item: 25
+          not_as_described: 25
+          size_issue: 20
+        null_unless: is_returned = true
+
+      - name: created_at
+        type: datetime
+        start: 2025-01-01
+        end: 2026-06-30

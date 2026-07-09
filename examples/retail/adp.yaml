@@ -1,0 +1,53 @@
+# Retail — Snowflake CDC
+# ======================
+# Run:  adp load
+#       adp load --dry-run   (preview without writing)
+
+version: 1
+project: retail
+
+generation:
+  output_format: parquet
+
+destinations:
+  - name: snowflake_retail
+    uri: ${SNOWFLAKE_URI}
+    table_prefix: PUBLIC
+
+    # ── CDC strategy ──────────────────────────────────────
+    # replace       : full refresh (DROP + INSERT)
+    # append        : INSERT new rows only
+    # merge          : UPSERT by primary_key  ← for incremental CDC
+    # delete+insert  : DELETE by incremental_key + INSERT
+    incremental_strategy: replace
+    primary_key: null
+
+    # ── Live source (optional) ────────────────────────────
+    # Uncomment to ingest from a live DB instead of local parquet.
+    # Supports any ingestr source: postgresql://, mysql://, snowflake://, etc.
+    # source:
+    #   uri: postgresql://${PG_USER}:${PG_PASSWORD}@${PG_HOST}:5432/prod
+    #   table: orders
+    #   sql: "SELECT * FROM orders WHERE updated_at >= '2026-01-01'"
+    #   incremental_key: updated_at
+
+    # ── Stream mode (optional, for continuous CDC) ─────────
+    # WARNING: blocks the CLI — use nohup or background for production.
+    # stream:
+    #   enabled: true
+    #   flush_interval: "30s"
+    #   flush_records: 50000
+    #   interval_start: "2026-01-01"
+    #   interval_end: "2026-07-01"
+
+    # ── Performance tuning ─────────────────────────────────
+    ingestr_options:
+      extract_parallelism: 10
+      loader_file_size: 50000
+      # extract_partition_by: order_date     # parallel extract by date column
+      # extract_partition_interval: auto
+      # page_size: 25000
+      # sql_limit: 0                        # 0 = unlimited
+
+load:
+  default_destination: snowflake_retail

@@ -1,22 +1,47 @@
+# Retail e-commerce — 3-year sales performance → Snowflake
+# =======================================================
+# Run:  python make_data.py && adp scan && adp profile &&
+#       adp generate-data && adp load
+
 version: 1
 project: retail-ecommerce
 environment: dev
 output_dir: output
+
 sources:
-- name: shop
-  type: csv
-  path: ./data
-  options: {}
-model_provider:
-  provider: minimax
-  base_url: https://api.minimax.io/v1
-  model: MiniMax-Text-01
-  api_key_env: MINIMAX_API_KEY
-  timeout_seconds: 60.0
+  - name: shop
+    type: csv
+    path: ./data
+
 generation:
-  default_rows: 1000
+  default_rows: 5000
   seed: 42
   chunk_rows: 100000
   output_format: parquet
-semantic:
-  format: generic
+  parallel_workers: 0
+
+destinations:
+  - name: snowflake_retail
+    uri: ${SNOWFLAKE_URI}
+    table_prefix: PUBLIC
+
+    # merge = UPSERT by primary_key (ideal for incremental CDC)
+    incremental_strategy: merge
+    primary_key: order_id
+
+    # ── Live source (optional) ────────────────────────────
+    # Uncomment to ingest from a live DB instead of local parquet.
+    # source:
+    #   uri: postgresql://${PG_USER}:${PG_PASSWORD}@${PG_HOST}:5432/prod
+    #   incremental_key: updated_at
+
+    ingestr_options:
+      extract_parallelism: 10
+      loader_file_size: 50000
+
+load:
+  default_destination: snowflake_retail
+  require_quality_pass: true
+  min_quality_score: 90
+  staging_format: parquet
+  parallel_tables: 2

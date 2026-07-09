@@ -1,20 +1,47 @@
-"""Retail e-commerce seed dataset: customers, products, orders, transactions.
+"""Seed CSVs for sales-performance profiling: 3 calendar years of retail activity.
 
-Realistic shapes: seasonal order volume, lognormal amounts, weighted categories,
-payment-method mix, FK chain customers/products -> orders -> transactions.
+Run:  python make_data.py
+Writes: data/customers.csv, products.csv, orders.csv, transactions.csv
 """
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
 import polars as pl
 
-N_CUSTOMERS = 2_000
-N_PRODUCTS = 300
-N_ORDERS = 12_000
 SEED = 11
+START = date(2023, 1, 1)
+END = date(2025, 12, 31)
+N_CUSTOMERS = 2_500
+N_PRODUCTS = 400
+N_ORDERS = 18_000
+
+
+def _seasonal_weight(d: date) -> float:
+    """Retail-ish rhythm: weekends, Q4 peak, festival window."""
+    w = 1.0
+    if d.weekday() >= 5:
+        w *= 1.35
+    if d.month in (11, 12):
+        w *= 1.8
+    elif d.month == 10 and 15 <= d.day <= 25:
+        w *= 1.5
+    elif d.month in (6, 7):
+        w *= 0.85
+    return w
+
+
+def _sample_order_dates(rng: np.random.Generator, n: int) -> list[date]:
+    days = (END - START).days + 1
+    weights = np.array(
+        [_seasonal_weight(START + timedelta(days=i)) for i in range(days)], dtype=np.float64
+    )
+    weights /= weights.sum()
+    offsets = rng.choice(days, size=n, p=weights)
+    return [START + timedelta(days=int(i)) for i in offsets]
 
 
 def main() -> None:
@@ -22,103 +49,77 @@ def main() -> None:
     out = Path(__file__).parent / "data"
     out.mkdir(exist_ok=True)
 
-    # -- customers -----------------------------------------------------------
-    cities = ["Pune", "Mumbai", "Delhi", "Bangalore", "Chennai", "Hyderabad", "Kolkata"]
+    cities = ["Mumbai", "Delhi", "Bangalore", "Pune", "Chennai", "Hyderabad", "Kolkata"]
+    regions = ["West", "North", "South", "East"]
+    channels = ["web", "mobile", "marketplace"]
+    categories = ["electronics", "apparel", "home", "beauty", "grocery"]
+    statuses = ["delivered", "cancelled", "returned"]
+    status_p = [0.82, 0.12, 0.06]
+    payments = ["upi", "card", "cod", "wallet"]
+    pay_p = [0.42, 0.28, 0.18, 0.12]
+
     pl.DataFrame(
         {
             "customer_id": np.arange(1, N_CUSTOMERS + 1),
             "full_name": [f"Customer {i}" for i in range(1, N_CUSTOMERS + 1)],
-            "email": [f"customer{i}@example.com" for i in range(1, N_CUSTOMERS + 1)],
-            "phone": [f"+91-98{rng.integers(10000000, 99999999)}" for _ in range(N_CUSTOMERS)],
-            "city": rng.choice(cities, N_CUSTOMERS, p=[0.2, 0.25, 0.15, 0.2, 0.08, 0.07, 0.05]),
-            "segment": rng.choice(["regular", "premium", "vip"], N_CUSTOMERS, p=[0.7, 0.25, 0.05]),
+            "email": [f"c{i}@example.com" for i in range(1, N_CUSTOMERS + 1)],
+            "city": rng.choice(cities, N_CUSTOMERS, p=[0.22, 0.2, 0.18, 0.12, 0.1, 0.1, 0.08]),
+            "segment": rng.choice(["regular", "premium", "vip"], N_CUSTOMERS, p=[0.68, 0.27, 0.05]),
             "signup_date": [
-                f"{y}-{m:02d}-{d:02d}"
-                for y, m, d in zip(
-                    rng.integers(2022, 2026, N_CUSTOMERS),
-                    rng.integers(1, 13, N_CUSTOMERS),
-                    rng.integers(1, 28, N_CUSTOMERS),
-                )
+                (START + timedelta(days=int(d))).isoformat()
+                for d in rng.integers(0, 900, N_CUSTOMERS)
             ],
-            "is_active": rng.random(N_CUSTOMERS) < 0.85,
         }
     ).write_csv(out / "customers.csv")
 
-    # -- products -----------------------------------------------------------
-    categories = ["electronics", "apparel", "home", "beauty", "sports", "books", "grocery"]
-    cat = rng.choice(categories, N_PRODUCTS, p=[0.15, 0.25, 0.15, 0.1, 0.1, 0.1, 0.15])
-    base_price = {
-        "electronics": 8000,
-        "apparel": 1200,
-        "home": 2500,
-        "beauty": 600,
-        "sports": 1800,
-        "books": 400,
-        "grocery": 250,
-    }
-    price = np.array([rng.lognormal(np.log(base_price[c]), 0.5) for c in cat]).round(2)
+    unit_price = np.round(rng.lognormal(6.8, 0.75, N_PRODUCTS), 2)
     pl.DataFrame(
         {
             "product_id": np.arange(1, N_PRODUCTS + 1),
             "product_name": [f"Product {i}" for i in range(1, N_PRODUCTS + 1)],
-            "category": cat,
-            "unit_price": price,
-            "stock_quantity": rng.integers(0, 500, N_PRODUCTS),
-            "is_discontinued": rng.random(N_PRODUCTS) < 0.05,
+            "category": rng.choice(categories, N_PRODUCTS, p=[0.28, 0.26, 0.2, 0.14, 0.12]),
+            "unit_price": unit_price,
         }
     ).write_csv(out / "products.csv")
 
-    # -- orders (seasonal: q4 heavy) ------------------------------------------
-    month_p = np.array([6, 5, 6, 6, 7, 7, 7, 8, 8, 10, 14, 16], dtype=float)
-    month_p /= month_p.sum()
-    months = rng.choice(np.arange(1, 13), N_ORDERS, p=month_p)
-    days = rng.integers(1, 28, N_ORDERS)
-    product_idx = rng.zipf(1.3, N_ORDERS) % N_PRODUCTS  # popularity skew
-    product_ids = product_idx + 1
+    order_dates = _sample_order_dates(rng, N_ORDERS)
+    prod_idx = rng.integers(0, N_PRODUCTS, N_ORDERS)
     qty = rng.poisson(1.4, N_ORDERS) + 1
-    amounts = (price[product_idx] * qty * rng.uniform(0.9, 1.05, N_ORDERS)).round(2)
+    amounts = np.round(unit_price[prod_idx] * qty, 2)
+    status = rng.choice(statuses, N_ORDERS, p=status_p)
+
     pl.DataFrame(
         {
             "order_id": np.arange(1, N_ORDERS + 1),
-            "customer_id": (rng.zipf(1.5, N_ORDERS) % N_CUSTOMERS) + 1,  # repeat buyers
-            "product_id": product_ids,
-            "order_date": [f"2025-{m:02d}-{d:02d}" for m, d in zip(months, days)],
+            "customer_id": rng.integers(1, N_CUSTOMERS + 1, N_ORDERS),
+            "product_id": prod_idx + 1,
+            "order_date": [d.isoformat() for d in order_dates],
+            "region": rng.choice(regions, N_ORDERS, p=[0.3, 0.28, 0.27, 0.15]),
+            "channel": rng.choice(channels, N_ORDERS, p=[0.45, 0.35, 0.2]),
             "quantity": qty,
             "total_amount": amounts,
-            "channel": rng.choice(["web", "mobile_app", "store"], N_ORDERS, p=[0.45, 0.4, 0.15]),
-            "status": rng.choice(
-                ["delivered", "shipped", "processing", "cancelled", "returned"],
-                N_ORDERS,
-                p=[0.72, 0.1, 0.08, 0.06, 0.04],
-            ),
+            "status": status,
         }
     ).write_csv(out / "orders.csv")
 
-    # -- transactions (1 per non-cancelled order, minor failures) ---------------
-    ok = rng.random(N_ORDERS) > 0.06
-    order_ids = np.arange(1, N_ORDERS + 1)[ok]
-    n_tx = len(order_ids)
+    paid_mask = status != "cancelled"
+    n_txn = int(paid_mask.sum())
+    txn_order_ids = np.arange(1, N_ORDERS + 1)[paid_mask]
+    txn_amounts = amounts[paid_mask]
+    txn_dates = [order_dates[i] for i, ok in enumerate(paid_mask) if ok]
+
     pl.DataFrame(
         {
-            "transaction_id": np.arange(1, n_tx + 1),
-            "order_id": order_ids,
-            "payment_method": rng.choice(
-                ["upi", "credit_card", "debit_card", "cod", "wallet"],
-                n_tx,
-                p=[0.4, 0.2, 0.15, 0.15, 0.1],
-            ),
-            "amount": amounts[ok],
-            "transaction_date": np.array([f"2025-{m:02d}-{d:02d}" for m, d in zip(months, days)])[
-                ok
-            ],
-            "tx_status": rng.choice(["success", "failed", "refunded"], n_tx, p=[0.93, 0.04, 0.03]),
+            "transaction_id": np.arange(1, n_txn + 1),
+            "order_id": txn_order_ids,
+            "payment_method": rng.choice(payments, n_txn, p=pay_p),
+            "amount": txn_amounts,
+            "transaction_date": [d.isoformat() for d in txn_dates],
         }
     ).write_csv(out / "transactions.csv")
 
-    print(
-        f"wrote customers({N_CUSTOMERS}) products({N_PRODUCTS}) "
-        f"orders({N_ORDERS}) transactions({n_tx}) -> {out}"
-    )
+    print(f"Wrote seed data to {out}/ ({START} → {END})")
+    print(f"  customers={N_CUSTOMERS:,}  products={N_PRODUCTS:,}  orders={N_ORDERS:,}  transactions={n_txn:,}")
 
 
 if __name__ == "__main__":

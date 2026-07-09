@@ -79,15 +79,18 @@ destinations:
       incremental_key: updated_at
 ```
 
-### Custom SQL extraction
+### Bounded extraction (time windows)
 
-Use `sql:` to supply a custom `SELECT` query. The query result is treated as the source table. Useful for filtering, joins, or schema mapping:
+ingestr does not support a `--sql` flag. To filter source data, use `incremental_key` with `stream.interval_start` / `stream.interval_end`, or set `source.table` to a database view:
 
 ```yaml
 source:
   uri: postgresql://${PG_USER}:${PG_PASSWORD}@${PG_HOST}:5432/prod_db
-  sql: "SELECT order_id, customer_id, total_amount, status, updated_at FROM orders WHERE region = 'APAC'"
+  table: orders_apac_view          # pre-filtered view in the source DB
   incremental_key: updated_at
+stream:
+  interval_start: "2026-06-01"
+  interval_end: "2026-07-01"
 ```
 
 ### Per-table source table mapping
@@ -107,12 +110,10 @@ source:
 source:
   uri: postgresql://${PG_USER}:${PG_PASSWORD}@${PG_HOST}:5432/prod_db
   table: orders
-  # sql overrides table when set:
-  # sql: "SELECT * FROM orders WHERE created_at >= '2026-01-01'"
   incremental_key: updated_at
   # ingestr_options:
   #   page_size: 10000
-  #   no_inference: true
+  #   sql_limit: 100000
 ```
 
 ```yaml

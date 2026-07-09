@@ -27,3 +27,12 @@ def test_topo_waves_parallel_dims() -> None:
     assert set(waves[0]) == {"dim_customer", "dim_product"}
     assert waves[1] == ["fact_order"]
     assert waves[2] == ["fact_order_item"]
+
+
+def test_topo_sort_breaks_cycle() -> None:
+    order = topo_sort(
+        ["a", "b", "c"],
+        [("a", "b"), ("b", "c"), ("c", "a")],
+    )
+    assert len(order) == 3
+    assert set(order) == {"a", "b", "c"}

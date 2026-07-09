@@ -39,6 +39,20 @@ def go_executor_path() -> str | None:
     return None
 
 
+def plan_requires_python(plan: GenerationPlan) -> bool:
+    """The Go executor has no seasonal sampler / calendar / seasonal_scale / inherit
+    support (nor date samplers), so any seasonal plan must run under Python."""
+    for t in plan.tables:
+        if any(fk.inherit for fk in t.foreign_keys):
+            return True
+        for cp in t.columns:
+            if cp.sampler in ("seasonal_date", "seasonal_datetime"):
+                return True
+            if cp.derive and ("seasonal_scale" in cp.derive or "calendar" in cp.derive):
+                return True
+    return False
+
+
 def should_use_go(cfg: GenerationConfig, max_table_rows: int) -> bool:
     if cfg.executor == "python":
         return False
@@ -107,6 +121,11 @@ def dispatch_generate(
 ) -> dict[str, Any]:
     """Run generation via Go (when configured) or the in-process Python engine."""
     max_rows = max((t.rows for t in plan.tables), default=0)
+    if plan_requires_python(plan):
+        log.info("plan uses seasonality features; running under the Python engine")
+        return generate(
+            plan, output_dir, output_format=output_format, parallel_workers=cfg.parallel_workers
+        )
     if should_use_go(cfg, max_rows):
         log.info("dispatching generation to Go executor (%d max rows)", max_rows)
         try:

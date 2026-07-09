@@ -220,10 +220,16 @@ def _seq_int(start: int = 1) -> Sampler:
 
 def _uuid_like() -> Sampler:
     def f(rng: np.random.Generator, n: int) -> pl.Series:
+        # Build 32 hex chars per row via numpy fancy indexing, then format each
+        # UUID in a single list comprehension (one Python loop over n rows).
         raw = rng.integers(0, 16, size=(n, 32))
         hexd = np.array(list("0123456789abcdef"))
-        strs = ["".join(row) for row in hexd[raw]]
-        return pl.Series([f"{s[:8]}-{s[8:12]}-4{s[13:16]}-a{s[17:20]}-{s[20:32]}" for s in strs])
+        chars = hexd[raw]  # (n, 32)
+        hex_strs = np.array(["".join(row) for row in chars])  # (n,)
+        uuids = np.array(
+            [f"{s[:8]}-{s[8:12]}-4{s[13:16]}-a{s[17:20]}-{s[20:32]}" for s in hex_strs]
+        )
+        return pl.Series(uuids)
 
     return f
 
@@ -235,7 +241,11 @@ def _choice(values: list[Any], weights: list[float] | None = None) -> Sampler:
             arr = np.asarray(weights, dtype=float)
             p = arr / arr.sum()
         idx = rng.choice(len(values), size=n, p=p)
-        return pl.Series([values[i] for i in idx])
+        # Numpy fancy indexing with object dtype is vectorized but Polars CSV sink
+        # requires string dtype. Cast to U-suffix to allow Polars to infer String type.
+        picked = np.asarray(values, dtype=object)[idx]
+        as_str = np.asarray(picked, dtype="U50")
+        return pl.Series(as_str)
 
     return f
 
@@ -254,11 +264,11 @@ def _email() -> Sampler:
         fi = rng.choice(len(FIRST_NAMES), size=n)
         li = rng.choice(len(LAST_NAMES), size=n)
         num = rng.integers(1, 999, size=n)
-        dom = rng.choice(len(_EMAIL_DOMAINS), size=n)
+        dom_idx = rng.choice(len(_EMAIL_DOMAINS), size=n)
         return pl.Series(
             [
                 f"{FIRST_NAMES[a].lower()}.{LAST_NAMES[b].lower()}{c}@{_EMAIL_DOMAINS[d]}"
-                for a, b, c, d in zip(fi, li, num, dom)
+                for a, b, c, d in zip(fi, li, num, dom_idx)
             ]
         )
 
@@ -348,36 +358,88 @@ def _dates(start: date, end: date, with_time: bool) -> Sampler:
     return f
 
 
+def _seasonal_dates(start: date, end: date, cfg: dict[str, Any], with_time: bool) -> Sampler:
+    """Event timestamps drawn weighted by a composed seasonal day curve.
+
+    Volume seasonality: peaks/troughs emerge on aggregation without changing the
+    row count. Deterministic given the injected RNG.
+    """
+    from ai_data_platform.generator.seasonality import sample_seasonal_dates
+
+    def f(rng: np.random.Generator, n: int) -> pl.Series:
+        return pl.Series(sample_seasonal_dates(rng, n, start, end, cfg, with_time))
+
+    return f
+
+
 def _template(pattern: str) -> Sampler:
     """Format template: '#' -> digit, '?' -> uppercase letter, else literal.
 
     Examples: "ORD-2025-######", "TRK##########", "+91-9#########", "??-####".
     """
-    digit_positions = [i for i, ch in enumerate(pattern) if ch == "#"]
-    letter_positions = [i for i, ch in enumerate(pattern) if ch == "?"]
-    letters = np.array(list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
-    base = list(pattern)
+    import re as _re
+
+    _LETTERS = np.array(list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
+    segments: list[tuple[str, int | str]] = []
+    i = 0
+    while i < len(pattern):
+        ch = pattern[i]
+        if ch == "#":
+            j = i
+            while j < len(pattern) and pattern[j] == "#":
+                j += 1
+            segments.append(("dig", j - i))
+            i = j
+        elif ch == "?":
+            j = i
+            while j < len(pattern) and pattern[j] == "?":
+                j += 1
+            segments.append(("let", j - i))
+            i = j
+        else:
+            j = i
+            while j < len(pattern) and pattern[j] not in "#?":
+                j += 1
+            segments.append(("lit", pattern[i:j]))
+            i = j
 
     def f(rng: np.random.Generator, n: int) -> pl.Series:
-        digits = rng.integers(0, 10, size=(n, max(len(digit_positions), 1)))
-        lets = rng.integers(0, 26, size=(n, max(len(letter_positions), 1)))
-        out = []
-        for row in range(n):
-            chars = base.copy()
-            for j, pos in enumerate(digit_positions):
-                chars[pos] = str(digits[row, j])
-            for j, pos in enumerate(letter_positions):
-                chars[pos] = letters[lets[row, j]]
-            out.append("".join(chars))
-        return pl.Series(out)
+        parts: list[np.ndarray] = []
+        for kind, val in segments:
+            if kind == "dig":
+                count: int = val  # type: ignore[assignment]
+                digits = rng.integers(0, 10, size=(n, count)).astype("U1")
+                seg_strs = digits.sum(axis=1)
+                parts.append(seg_strs)
+            elif kind == "let":
+                count: int = val  # type: ignore[assignment]
+                lets = rng.integers(0, 26, size=(n, count))
+                lets_strs = np.array(["".join(_LETTERS[l]) for l in lets])
+                parts.append(lets_strs)
+            else:
+                parts.append(np.full(n, str(val), dtype="U30"))
+        result = parts[0]
+        for p in parts[1:]:
+            result = np.char.add(result, p)
+        return pl.Series(result)
 
     return f
 
 
 def _words(k: int = 2) -> Sampler:
+    _WORDS = np.asarray(WORDS, dtype="U20")
+
     def f(rng: np.random.Generator, n: int) -> pl.Series:
         idx = rng.choice(len(WORDS), size=(n, k))
-        return pl.Series([" ".join(WORDS[i] for i in row) for row in idx])
+        word_mat = _WORDS[idx]  # (n, k)
+        # Interleave words with single-space separators using numpy.
+        out = np.full((n, k * 2 - 1), " ", dtype="U20")
+        out[:, ::2] = word_mat
+        # Reduce along axis=1 with np.char.add (vectorized, no Python loop).
+        result = out[:, 0]
+        for col in range(1, out.shape[1]):
+            result = np.char.add(result, out[:, col])
+        return pl.Series(result)
 
     return f
 
@@ -424,6 +486,12 @@ def build_sampler(spec: SamplerSpec) -> Sampler:
             start = date.fromisoformat(p.get("start", "2024-01-01"))
             end = date.fromisoformat(p.get("end", "2026-01-01"))
             return _dates(start, end, spec.sampler == "datetime")
+        case "seasonal_date" | "seasonal_datetime":
+            start = date.fromisoformat(p.get("start", "2024-01-01"))
+            end = date.fromisoformat(p.get("end", "2026-01-01"))
+            return _seasonal_dates(
+                start, end, dict(p.get("factor", {})), spec.sampler == "seasonal_datetime"
+            )
         case "template":
             return _template(str(p.get("pattern", "########")))
         case "words":
@@ -519,6 +587,13 @@ def infer_sampler(
         params: dict[str, Any] = {}
         if profile and profile.get("min") and profile.get("max"):
             params = {"start": str(profile["min"])[:10], "end": str(profile["max"])[:10]}
+        # seasonality marker (set by apply_spec on a table's anchor column) turns
+        # the uniform date draw into a seasonally-weighted one. Granularity follows
+        # the declared type: datetime => time-of-day component, date => day only.
+        if profile and profile.get("seasonality"):
+            marker = profile["seasonality"]
+            kind = "seasonal_datetime" if dtype == "datetime" else "seasonal_date"
+            return SamplerSpec(kind, {**params, "factor": marker.get("factor", {})})
         return SamplerSpec(dtype, params)
     if dtype == "bool":
         return SamplerSpec("bool")

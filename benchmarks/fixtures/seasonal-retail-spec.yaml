@@ -1,0 +1,83 @@
+# Benchmark fixture — seasonal retail spec (not shipped as a user example).
+# For the walkthrough example, see examples/retail-ecommerce/
+version: 1
+tables:
+  - name: fact_orders
+    rows: 50000
+    seasonality:
+      anchor: order_ts
+      trend: {kind: linear, annual_growth: 0.18}
+      weekly: {Mon: 0.8, Fri: 1.2, Sat: 1.6, Sun: 1.4}
+      yearly:
+        amplitude: 0.15
+        peaks:
+          - {month: 11, day: 29, strength: 3.5, width_days: 4}
+          - {month: 10, day: 21, strength: 2.5, width_days: 6}
+      holidays: {country: IN, strength: 1.6, window_days: 1}
+      events:
+        - {name: summer_sale, start: 2025-06-01, end: 2025-06-15, multiplier: 1.8}
+      daily:
+        hour_weights: [0.2,0.1,0.1,0.1,0.1,0.2,0.4,0.7,1.0,1.1,1.2,1.4,
+                       1.5,1.2,1.0,1.0,1.1,1.4,1.8,1.7,1.3,0.9,0.6,0.3]
+      noise: {kind: lognormal, sigma: 0.05}
+    columns:
+      - {name: order_id, type: uuid, primary_key: true}
+      - {name: order_ts, type: datetime, start: 2024-01-01, end: 2025-12-31}
+      - name: revenue
+        type: float
+        mean: 1800
+        std: 900
+        min: 50
+        seasonal_scale:
+          anchor: order_ts
+          yearly: {amplitude: 0.15, peaks: [{month: 11, day: 29, strength: 1.6, width_days: 5}]}
+      - name: units
+        type: int
+        mean: 3
+        min: 1
+      - name: cal
+        type: string
+        calendar:
+          anchor: order_ts
+          parts: [day_of_week, is_weekend, month, quarter, fiscal_quarter, season, is_holiday]
+          fiscal_year_start_month: 4
+          country: IN
+
+  - name: fact_payments
+    rows: 50000
+    columns:
+      - {name: payment_id, type: uuid, primary_key: true}
+      - name: order_id
+        type: uuid
+        references: fact_orders.order_id
+        inherit: "order_ts as parent_order_ts"
+      - name: payment_ts
+        type: datetime
+        start: 2024-01-01
+        end: 2025-12-31
+        after: {column: parent_order_ts, min_minutes: 1, max_minutes: 240}
+      - name: amount
+        type: float
+        mean: 1800
+        std: 900
+        min: 50
+      - name: payment_method
+        type: string
+        values: {UPI: 45, Credit Card: 22, Debit Card: 15, Wallet: 10, COD: 8}
+
+  - name: fact_shipments
+    rows: 50000
+    columns:
+      - {name: shipment_id, type: uuid, primary_key: true}
+      - name: payment_id
+        type: uuid
+        references: fact_payments.payment_id
+        inherit: "payment_ts as parent_payment_ts"
+      - name: shipped_ts
+        type: datetime
+        start: 2024-01-01
+        end: 2025-12-31
+        after: {column: parent_payment_ts, min_minutes: 240, max_minutes: 4320}
+      - name: carrier
+        type: string
+        values: {Delhivery: 30, BlueDart: 25, Ekart: 25, DTDC: 20}

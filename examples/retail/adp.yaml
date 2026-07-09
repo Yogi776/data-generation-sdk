@@ -41,13 +41,10 @@ destinations:
     #   interval_end: "2026-07-01"
 
     # ── Performance tuning ─────────────────────────────────
+    # auto_extract_partition: true  # enable when strategy is merge/append
     ingestr_options:
-      extract_parallelism: 10
-      loader_file_size: 50000
-      # extract_partition_by: order_date     # parallel extract by date column
-      # extract_partition_interval: auto
-      # page_size: 25000
-      # sql_limit: 0                        # 0 = unlimited
+      extract_parallelism: 16
+      loader_file_size: 100000
 
 load:
   default_destination: snowflake_retail

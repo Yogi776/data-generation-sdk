@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ai_data_platform.connectors.base import ColumnSchema, TableSchema
 from ai_data_platform.core.exceptions import ConfigError
@@ -78,6 +78,166 @@ class ValuesBySpec(BaseModel):
     mapping: dict[str, dict[str, float]]
 
 
+# -- seasonality primitives (generic — no industry is hardcoded) ---------------
+CalendarPart = Literal[
+    "day_of_week", "is_weekend", "week", "month", "quarter", "year",
+    "fiscal_month", "fiscal_quarter", "fiscal_year", "season",
+    "is_holiday", "is_business_day",
+]
+
+
+class TrendSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["linear", "exponential", "logarithmic"] = "linear"
+    annual_growth: float = 0.0  # e.g. 0.15 = +15% per year
+
+
+class YearlyPeakSpec(BaseModel):
+    """A recurring yearly bump (e.g. Black Friday, Diwali) — a Gaussian on the calendar."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    month: int = Field(ge=1, le=12)
+    day: int = Field(default=15, ge=1, le=31)
+    strength: float = 1.5  # multiplier at the peak center
+    width_days: int = Field(default=3, ge=1)
+
+
+class YearlySpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    amplitude: float = 0.0  # sinusoid amplitude (0 = off)
+    phase_days: float = 0.0
+    peaks: list[YearlyPeakSpec] = Field(default_factory=list)
+
+
+class MonthlySpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shape: Literal["uniform", "month_start", "month_end"] = "uniform"
+    strength: float = 0.5
+    weights_by_day: dict[int, float] | None = None  # explicit day-of-month -> multiplier
+
+
+class DailySpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    hour_weights: list[float]  # exactly 24 weights (hour-of-day shape)
+
+    @field_validator("hour_weights")
+    @classmethod
+    def _len_24(cls, v: list[float]) -> list[float]:
+        if len(v) != 24:
+            raise ValueError("daily.hour_weights must have exactly 24 values")
+        return v
+
+
+class SeasonHolidaySpec(BaseModel):
+    """Holiday effect: a country calendar (via the `holidays` package) or explicit dates."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    country: str | None = None  # ISO code, e.g. "IN", "US" — needs the holidays extra
+    subdiv: str | None = None  # optional state/province subdivision
+    dates: list[date] | None = None  # explicit dates (always works, no dependency)
+    strength: float = 1.5
+    window_days: int = Field(default=0, ge=0)
+
+
+class EventSpec(BaseModel):
+    """A named date-range window: promotions, sales, weather, economic cycles — all generic.
+
+    A single-day event is just ``start == end``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    start: date
+    end: date
+    multiplier: float = 1.0
+
+    @model_validator(mode="after")
+    def _ordered(self) -> EventSpec:
+        if self.end < self.start:
+            raise ValueError(f"event {self.name!r}: end must be >= start")
+        return self
+
+
+class NoiseSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["lognormal", "normal"] = "lognormal"
+    sigma: float = Field(default=0.0, ge=0.0)
+
+
+class FactorSpec(BaseModel):
+    """The composable multiplier config shared by volume and value seasonality."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    base: float = 1.0
+    trend: TrendSpec | None = None
+    yearly: YearlySpec | None = None
+    monthly: MonthlySpec | None = None
+    weekly: dict[str, float] | None = None  # {"Sat": 1.6, "Sun": 1.4, ...}
+    daily: DailySpec | None = None
+    holidays: SeasonHolidaySpec | None = None
+    events: list[EventSpec] = Field(default_factory=list)
+    noise: NoiseSpec | None = None
+
+    def to_cfg(self, start: date | None, end: date | None) -> dict[str, Any]:
+        """JSON factor dict for the seasonality engine, with the range anchored.
+
+        Subclasses may add non-factor fields (anchor/with_time) — drop them so the
+        cfg carries only composable factors plus the range references.
+        """
+        cfg = self.model_dump(mode="json", exclude_none=True)
+        cfg.pop("anchor", None)
+        if start is not None:
+            cfg["_start"] = start.isoformat()
+        if end is not None:
+            cfg["_end"] = end.isoformat()
+        return cfg
+
+
+class SeasonalitySpec(FactorSpec):
+    """Table-level: shapes an anchor timestamp column's event volume over time.
+
+    The anchor column's declared type drives granularity: a ``datetime`` anchor
+    gets a time-of-day component (shaped by ``daily``); a ``date`` anchor does not.
+    """
+
+    anchor: str
+
+
+class SeasonalScaleSpec(FactorSpec):
+    """Column-level: scale a base-sampled metric by the seasonal multiplier at its anchor date."""
+
+    anchor: str
+
+
+class CalendarSpec(BaseModel):
+    """Column-level: expand one block into N derived calendar-attribute columns."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    anchor: str
+    parts: list[CalendarPart]
+    prefix: str | None = None  # emitted name = f"{prefix or anchor}_{part}"
+    fiscal_year_start_month: int | None = Field(default=None, ge=1, le=12)
+    hemisphere: Literal["north", "south"] | None = None
+    country: str | None = None  # for is_holiday / is_business_day
+
+    @field_validator("parts")
+    @classmethod
+    def _non_empty(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("calendar.parts must list at least one part")
+        return v
+
+
 class ColumnSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -85,6 +245,7 @@ class ColumnSpec(BaseModel):
     type: ColumnType = "string"
     primary_key: bool = False
     references: str | None = None  # "parent_table.parent_column"
+    inherit: str | None = None  # "parent_column as local_name" (requires references)
     values: dict[str, float] | list[str] | None = None  # categorical (weights optional)
     mean: float | None = None
     std: float | None = None
@@ -99,6 +260,9 @@ class ColumnSpec(BaseModel):
     after: AfterSpec | None = None  # e.g. payment_date after order_date
     null_unless: str | None = None  # e.g. "order_status = 'Returned'"
     values_by: ValuesBySpec | None = None  # hierarchical: city depends on state
+    # -- seasonality --------------------------------------------------------
+    seasonal_scale: SeasonalScaleSpec | None = None  # scale this metric by seasonality
+    calendar: CalendarSpec | None = None  # expand into derived calendar columns
 
     @field_validator("references")
     @classmethod
@@ -106,6 +270,22 @@ class ColumnSpec(BaseModel):
         if v is not None and v.count(".") != 1:
             raise ValueError('references must be "table.column"')
         return v
+
+    @model_validator(mode="after")
+    def _inherit_needs_reference(self) -> ColumnSpec:
+        if self.inherit is not None:
+            if " as " not in self.inherit:
+                raise ValueError('inherit must be "parent_column as local_name"')
+            if not self.references:
+                raise ValueError("inherit requires references on the same column")
+        return self
+
+    def inherit_parts(self) -> tuple[str, str] | None:
+        """Return (parent_column, local_name) parsed from `inherit`, or None."""
+        if not self.inherit:
+            return None
+        parent_col, local = self.inherit.split(" as ", 1)
+        return parent_col.strip(), local.strip()
 
 
 Relationship = Literal["one_to_many", "many_to_one", "one_to_one"]
@@ -140,6 +320,7 @@ class TableSpec(BaseModel):
     columns: list[ColumnSpec]
     joins: list[TableJoinSpec] = Field(default_factory=list)
     rows: int | None = Field(default=None, ge=1)  # default row count for this table
+    seasonality: SeasonalitySpec | None = None  # time-aware event volume over the anchor column
 
     @field_validator("columns")
     @classmethod
@@ -147,6 +328,15 @@ class TableSpec(BaseModel):
         if not v:
             raise ValueError("table needs at least one column")
         return v
+
+    @model_validator(mode="after")
+    def _seasonality_anchor_exists(self) -> TableSpec:
+        col_names = {c.name for c in self.columns}
+        if self.seasonality and self.seasonality.anchor not in col_names:
+            raise ValueError(
+                f"seasonality.anchor {self.seasonality.anchor!r} is not a column of {self.name!r}"
+            )
+        return self
 
 
 class JoinSpec(BaseModel):
@@ -257,8 +447,33 @@ tables:
         values_by:                           # hierarchy (city within state)
           column: state
           mapping: {StateA: {City1: 60, City2: 40}}
+        seasonal_scale:                      # scale this metric by seasonality at an anchor date
+          anchor: order_ts
+          trend: {kind: linear, annual_growth: 0.1}
+        calendar:                            # expand into derived date-attribute columns
+          anchor: order_ts
+          parts: [day_of_week, is_weekend, quarter, season, is_holiday]
+        inherit: "order_ts as parent_order_ts"   # carry a parent column across an FK (needs references)
+    seasonality:                             # TABLE-level: time-aware event volume (peaks/trend)
+      anchor: order_ts                       # a date/datetime column of THIS table (datetime => time-of-day)
+      trend: {kind: linear, annual_growth: 0.15}
+      weekly: {Sat: 1.6, Sun: 1.4, Mon: 0.8}       # day-of-week multipliers
+      yearly: {amplitude: 0.3, peaks: [{month: 11, day: 27, strength: 3.0, width_days: 6}]}
+      holidays: {country: IN, strength: 1.8, window_days: 2}   # or dates: [YYYY-MM-DD, ...]
+      events: [{name: summer_sale, start: 2025-06-01, end: 2025-06-20, multiplier: 1.5}]
 
 Rules:
+- SEASONALITY (optional, use when the domain has real temporal rhythm): declare a
+  table-level `seasonality` block on a fact table with an `anchor` date/datetime
+  column to make event volume peak on busy days (Black Friday, festivals, paydays,
+  flu season) and follow a growth `trend`. Weather/economic cycles are just named
+  `events` windows. Nothing is industry-specific — it is all generic primitives.
+- To make downstream tables share the SAME temporal rhythm, add `inherit:
+  "parent_ts as parent_ts_local"` on the child's FK column, then `after:
+  {column: parent_ts_local, ...}` on the child's own timestamp.
+- Use `seasonal_scale` to make a MEASURE (revenue/units) rise on peak days; use
+  `calendar` to emit date-attribute columns (quarter, season, is_holiday, ...).
+  Both need their `anchor` column declared BEFORE them.
 - Every table has exactly one primary_key column (type uuid, or int for sequences).
 - FK columns are declared via joins; the FK column must exist in the child table.
 - Columns used in expr/after must be declared BEFORE the column referencing them.
@@ -392,47 +607,146 @@ def _column_profile(col: ColumnSpec) -> dict[str, Any]:
     return prof
 
 
-def apply_spec(catalog: Catalog, spec: DatasetSpec, source_name: str = "spec") -> dict[str, Any]:
+def _build_table_columns(
+    table: TableSpec,
+    calendar_defaults: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, dict[str, str]]]:
+    """Expand a table's columns into (schema_args, profiles, inherit_map).
+
+    Calendar blocks expand into one column per part; the anchor column gets a
+    seasonality marker; seasonal_scale/inherit are threaded into profiles/map.
+    Per-block calendar settings win over `calendar_defaults` (from GenerationConfig).
+    """
+    from ai_data_platform.generator.seasonality import CALENDAR_PART_DTYPE
+
+    defaults = calendar_defaults or {}
+    col_by_name = {c.name: c for c in table.columns}
+
+    def _range(anchor: str) -> tuple[date | None, date | None]:
+        a = col_by_name.get(anchor)
+        return (a.start, a.end) if a else (None, None)
+
+    schema_cols: list[dict[str, Any]] = []
+    profiles: list[dict[str, Any]] = []
+    inherit_map: dict[str, dict[str, str]] = {}
+
+    for col in table.columns:
+        # calendar: one declared column expands into N derived attribute columns
+        if col.calendar is not None:
+            base = col.calendar.prefix or col.calendar.anchor
+            for part in col.calendar.parts:
+                name = f"{base}_{part}"
+                dtype = CALENDAR_PART_DTYPE[part]
+                cal_cfg: dict[str, Any] = {"anchor": col.calendar.anchor, "part": part}
+                fys = col.calendar.fiscal_year_start_month
+                if fys is None:
+                    fys = defaults.get("fiscal_year_start_month")
+                if fys is not None:
+                    cal_cfg["fiscal_year_start_month"] = fys
+                hemi = col.calendar.hemisphere or defaults.get("hemisphere")
+                if hemi is not None:
+                    cal_cfg["hemisphere"] = hemi
+                country = col.calendar.country or defaults.get("country")
+                if country is not None:
+                    cal_cfg["country"] = country
+                schema_cols.append({"name": name, "type": dtype, "nullable": False})
+                profiles.append(
+                    {
+                        "name": name,
+                        "dtype": dtype,
+                        "count": 1000,
+                        "nulls": 0,
+                        "null_ratio": 0.0,
+                        "distinct": 100,
+                        "uniqueness": 0.1,
+                        "pk_candidate": False,
+                        "pii": {"level": "none", "category": None, "confidence": 0.9},
+                        "derive": {"calendar": cal_cfg},
+                    }
+                )
+            continue
+
+        prof = _column_profile(col)
+        schema_cols.append(
+            {"name": col.name, "type": _catalog_type(col.type), "nullable": col.null_ratio > 0}
+        )
+
+        if col.seasonal_scale is not None:
+            s, e = _range(col.seasonal_scale.anchor)
+            prof.setdefault("derive", {})["seasonal_scale"] = {
+                "anchor": col.seasonal_scale.anchor,
+                "factor": col.seasonal_scale.to_cfg(s, e),
+            }
+
+        parts = col.inherit_parts()
+        if parts:
+            parent_col, local = parts
+            inherit_map[col.name] = {"parent_column": parent_col, "as": local}
+
+        profiles.append(prof)
+
+    # volume seasonality: mark the anchor so infer_sampler picks the seasonal sampler
+    if table.seasonality is not None:
+        anchor = table.seasonality.anchor
+        s, e = _range(anchor)
+        factor = table.seasonality.to_cfg(s, e)
+        for prof in profiles:
+            if prof["name"] == anchor:
+                prof["seasonality"] = {"factor": factor}
+                break
+
+    return schema_cols, profiles, inherit_map
+
+
+def apply_spec(
+    catalog: Catalog,
+    spec: DatasetSpec,
+    source_name: str = "spec",
+    *,
+    calendar_defaults: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Write spec-declared tables, keys, relationships, and profiles to the catalog.
 
     After this, `build_plan`/`generate` work exactly as if the tables had been
-    scanned and profiled from a real source.
+    scanned and profiled from a real source. `calendar_defaults` supplies
+    fiscal/hemisphere/country fallbacks for `calendar` blocks (from GenerationConfig).
     """
     table_names = {t.name for t in spec.tables}
     catalog.upsert_source(source_name, "spec")
 
+    columns_by_table: dict[str, set[str]] = {}
     for table in spec.tables:
+        schema_cols, profiles, inherit_map = _build_table_columns(table, calendar_defaults)
+        columns_by_table[table.name] = {sc["name"] for sc in schema_cols}
         schema = TableSchema(
             name=table.name,
             schema_name="spec",
             columns=tuple(
                 ColumnSchema(
-                    name=c.name,
-                    data_type=_catalog_type(c.type),
-                    nullable=c.null_ratio > 0,
+                    name=sc["name"],
+                    data_type=sc["type"],
+                    nullable=sc["nullable"],
                     ordinal=i,
                 )
-                for i, c in enumerate(table.columns)
+                for i, sc in enumerate(schema_cols)
             ),
         )
         table_id = catalog.upsert_table(source_name, schema)
         pks = [c.name for c in table.columns if c.primary_key]
         if pks:
             catalog.set_primary_key(table_id, pks[:1])
-        catalog.save_profile(
-            table.name,
-            {
-                "table": table.name,
-                "rows_sampled": 1000,
-                "declared_row_count": None,
-                "spec_rows": table.rows,  # per-table default row count
-                "source": "spec",
-                "columns": [_column_profile(c) for c in table.columns],
-                "pk_candidates": pks[:1],
-            },
-        )
-
-    columns_by_table = {t.name: {c.name for c in t.columns} for t in spec.tables}
+        payload: dict[str, Any] = {
+            "table": table.name,
+            "rows_sampled": 1000,
+            "declared_row_count": None,
+            "spec_rows": table.rows,  # per-table default row count
+            "source": "spec",
+            "columns": profiles,
+            "pk_candidates": pks[:1],
+        }
+        if inherit_map:
+            payload["inherit"] = inherit_map
+        catalog.save_profile(table.name, payload)
 
     def _add_fk(
         child_t: str, child_c: str, parent_t: str, parent_c: str, kind: str, evidence: str

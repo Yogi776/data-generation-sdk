@@ -113,3 +113,41 @@ class QueryTimeoutError(ExplorerError):
 
 class QueryTooLargeError(ExplorerError):
     """A query's estimated scan exceeded the configured max_scan_rows guard."""
+
+
+class IngestionError(ADPError):
+    """Universal data ingestion failure."""
+
+
+class LoadError(ADPError):
+    """Warehouse / object-store load failure (adp load)."""
+
+
+class DestinationNotFoundError(LoadError):
+    def __init__(self, name: str, known: list[str]) -> None:
+        super().__init__(
+            f"Destination {name!r} is not defined in adp.yaml.",
+            hint=f"Known destinations: {', '.join(known) or '(none)'}. Add one under destinations:.",
+        )
+
+
+class FormatDetectionError(IngestionError):
+    """The source format could not be determined."""
+
+
+class UnsupportedFormatError(IngestionError):
+    def __init__(self, fmt: str, supported: list[str]) -> None:
+        super().__init__(
+            f"Format {fmt!r} is not supported.",
+            hint=f"Supported: {', '.join(sorted(supported))}.",
+        )
+
+
+class FormatDependencyError(IngestionError):
+    """A format needs an optional dependency or DuckDB extension that is missing."""
+
+    def __init__(self, fmt: str, remedy: str) -> None:
+        super().__init__(
+            f"Reading {fmt!r} requires an optional component that is not available.",
+            hint=remedy,
+        )

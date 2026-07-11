@@ -1,0 +1,32 @@
+# Catalog for Snowflake → Snowflake load
+# ======================================
+# Defines which tables to replicate and primary keys for merge/upsert.
+# Column types are used for catalog metadata only — ingestr reads the live
+# Snowflake schema at extract time.
+#
+# Table names should match source Snowflake objects (case-sensitive if quoted).
+
+version: 1
+tables:
+  - name: dim_customer
+    rows: 1
+    columns:
+      - name: customer_id
+        type: string
+        primary_key: true
+      - name: updated_at
+        type: timestamp
+
+  - name: fact_order
+    rows: 1
+    columns:
+      - name: order_id
+        type: string
+        primary_key: true
+      - name: customer_id
+        type: string
+        ref: dim_customer.customer_id
+      - name: order_date
+        type: date
+      - name: updated_at
+        type: timestamp

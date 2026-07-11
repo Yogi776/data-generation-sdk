@@ -3,6 +3,8 @@
 | Project | Goal |
 |---------|------|
 | [retail-ecommerce](retail-ecommerce/) | **Sales performance analysis** — 3 years of orders, generate parquet, load to Snowflake |
+| [snowflake-to-snowflake](snowflake-to-snowflake/) | **Live replication** — source Snowflake → destination Snowflake via `source:` + ingestr |
+| [retail](retail/) | Spec-driven retail dims/facts → Snowflake (parquet staging) |
 
 ```bash
 cd retail-ecommerce

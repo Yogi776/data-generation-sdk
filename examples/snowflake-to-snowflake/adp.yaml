@@ -1,0 +1,54 @@
+# Snowflake → Snowflake replication / migration
+# =============================================
+# Copy tables from a source Snowflake account/database into a target Snowflake
+# warehouse — no local parquet staging, no adp generate-data.
+#
+# Run:
+#   cp .env.example .env   # fill in both URIs
+#   adp apply-spec spec.yaml
+#   adp load doctor
+#   adp load
+
+version: 1
+project: snowflake-to-snowflake
+
+destinations:
+  - name: sf_to_sf
+    # Target Snowflake (analytics / dev / DR copy)
+    uri: ${SNOWFLAKE_DEST_URI}
+    table_prefix: PUBLIC
+
+    # ── Strategy ───────────────────────────────────────────
+    # replace       : full refresh (truncate + reload)
+    # merge         : upsert by primary_key (incremental CDC)
+    # delete+insert : refresh rows in incremental_key window
+    # append        : insert new rows only
+    incremental_strategy: merge
+    primary_key: order_id
+
+    # ── Live source: source Snowflake ──────────────────────
+    # Any ingestr snowflake:// URI. Table list comes from spec.yaml / catalog.
+    # Per-table source name defaults to the spec table name (e.g. fact_order).
+    source:
+      uri: ${SNOWFLAKE_SOURCE_URI}
+      incremental_key: updated_at
+      ingestr_options:
+        page_size: 25000
+
+    # Optional: remap spec table → destination object name
+    # tables:
+    #   fact_order: ANALYTICS.FACT_ORDERS
+    #   dim_customer: ANALYTICS.DIM_CUSTOMERS
+
+    # Optional: time-bounded incremental window
+    # stream:
+    #   interval_start: "2026-06-01"
+    #   interval_end: "2026-07-01"
+
+    ingestr_options:
+      loader_file_size: 100000
+
+load:
+  default_destination: sf_to_sf
+  require_quality_pass: false   # skipped automatically for live sources
+  parallel_tables: 2

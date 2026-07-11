@@ -163,6 +163,8 @@ class ProjectConfig(BaseModel):
 
     version: int = CONFIG_VERSION
     project: str
+    type: str | None = None  # e.g. pipeline, workflow — informational
+    tags: list[str] = Field(default_factory=list)
     environment: str = "dev"
     output_dir: str = "output"
     sources: list[SourceConfig] = Field(default_factory=list)
@@ -205,8 +207,10 @@ def load_config(root: str | Path = ".") -> ProjectConfig:
         raw: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as e:
         raise ConfigError(f"adp.yaml is not valid YAML: {e}") from e
+    from ai_data_platform.config_normalize import normalize_adp_yaml
+
     try:
-        return ProjectConfig.model_validate(raw)
+        return ProjectConfig.model_validate(normalize_adp_yaml(raw))
     except Exception as e:
         raise ConfigError(f"adp.yaml failed validation: {e}") from e
 

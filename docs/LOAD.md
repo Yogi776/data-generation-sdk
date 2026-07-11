@@ -65,6 +65,36 @@ Any [ingestr source](https://getbruin.com/docs/ingestr/supported-sources/) is su
 | `mongodb://` | `mongodb://user:pass@host:27017/app` |
 | `bigquery://` | `bigquery://project?credentials_path=/creds.json` |
 
+### Snowflake → Snowflake
+
+Replicate between two Snowflake accounts/databases by setting `source.address` (read) and `sink.address` (write). Full example: [examples/snowflake-to-snowflake](../examples/snowflake-to-snowflake/).
+
+**Pipeline format (recommended):**
+
+```yaml
+name: wf-sf-to-sf
+version: v1
+type: pipeline
+
+pipeline:
+  source:
+    address: ${SNOWFLAKE_SOURCE_URI}
+    incremental_key: updated_at
+  sink:
+    address: ${SNOWFLAKE_DEST_URI}
+    table_prefix: PUBLIC
+    incremental_strategy: merge
+    primary_key: order_id
+```
+
+**Legacy `destinations:` format** still works — both compile to the same load plan.
+
+```bash
+adp apply-spec spec.yaml
+adp load doctor
+adp load
+```
+
 ### Minimal config
 
 ```yaml
